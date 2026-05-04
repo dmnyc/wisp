@@ -764,5 +764,6 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
         sparkRepo.disconnect()
         relayPool.disconnectAll()
         liveMetricsSocket?.close(1000, null)
+        notifRepo.shutdown()
     }
 }

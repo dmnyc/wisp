@@ -26,7 +26,7 @@ object MediaDownloader {
     )
 
     private val httpClient
-        get() = com.wisp.app.relay.HttpClientFactory.getMediaClient()
+        get() = com.wisp.app.relay.HttpClientFactory.getDownloadClient()
 
     suspend fun downloadMedia(context: Context, url: String) {
         try {

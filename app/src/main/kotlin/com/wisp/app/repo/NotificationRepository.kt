@@ -17,6 +17,7 @@ import com.wisp.app.nostr.ZapEntry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -93,13 +94,19 @@ class NotificationRepository(
     init {
         rebuildScope.launch {
             for (signal in rebuildSignals) {
-                delay(50)
+                // One frame is enough to coalesce bursts from a single relay
+                // batch without making single-arrival updates feel sluggish.
+                delay(16)
                 while (rebuildSignals.tryReceive().isSuccess) Unit
                 synchronized(lock) {
                     rebuildSortedList()
                 }
             }
         }
+    }
+
+    fun shutdown() {
+        rebuildScope.cancel()
     }
 
     fun getLatestNotifTimestamp(): Long? = if (latestNotifTs > 0) latestNotifTs else null
