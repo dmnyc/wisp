@@ -4,8 +4,7 @@ import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.rememberTransformableState
-import androidx.compose.foundation.gestures.transformable
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -32,6 +31,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -58,10 +58,6 @@ fun FullScreenEncryptedImageViewer(
         var scale by remember { mutableFloatStateOf(1f) }
         var offset by remember { mutableStateOf(Offset.Zero) }
 
-        val transformableState = rememberTransformableState { zoomChange, panChange, _ ->
-            scale = (scale * zoomChange).coerceIn(0.5f, 5f)
-            offset = if (scale > 1f) offset + panChange else Offset.Zero
-        }
 
         val context = LocalContext.current
         val scope = rememberCoroutineScope()
@@ -89,7 +85,13 @@ fun FullScreenEncryptedImageViewer(
                         translationX = offset.x,
                         translationY = offset.y
                     )
-                    .transformable(state = transformableState)
+                    .pointerInput(Unit) {
+                        detectTransformGestures { _, pan, zoom, _ ->
+                            val newScale = (scale * zoom).coerceIn(0.5f, 5f)
+                            offset = if (newScale > 1f) offset + pan * scale else Offset.Zero
+                            scale = newScale
+                        }
+                    }
             )
 
             Row(
