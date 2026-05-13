@@ -98,6 +98,7 @@ fun ThreadScreen(
     onArticleClick: ((Int, String, String) -> Unit)? = null,
     onPayInvoice: (suspend (String) -> Boolean)? = null,
     translationRepo: TranslationRepository? = null,
+    autoTranslate: Boolean = false,
     resolvedEmojis: Map<String, String> = emptyMap(),
     unicodeEmojis: List<String> = emptyList(),
     onOpenEmojiLibrary: (() -> Unit)? = null,
@@ -377,6 +378,7 @@ fun ThreadScreen(
                                     noteActions = noteActions,
                                     translationState = translationState,
                                     onTranslate = { translationRepo?.translate(event.id, event.content) },
+                                    autoTranslate = autoTranslate,
                                     pollVoteCounts = pollVoteCounts,
                                     pollTotalVotes = pollTotalVotes,
                                     userPollVotes = userPollVotes,
@@ -464,6 +466,7 @@ fun ThreadScreen(
                                         noteActions = noteActions,
                                         translationState = translationState,
                                         onTranslate = { translationRepo?.translate(event.id, event.content) },
+                                        autoTranslate = autoTranslate,
                                     )
                                     Row(
                                         modifier = Modifier

@@ -537,6 +537,9 @@
     <string name="settings_profile_json_copied">Profile JSON copied</string>
 
     <!-- Translation (UI for post content translation) -->
+    <string name="settings_translation">Translation</string>
+    <string name="settings_auto_translate">Auto-translate notes</string>
+    <string name="settings_auto_translate_description">Automatically translate notes that aren\'t in your device language.</string>
     <string name="translate_sensitive_content">Sensitive content</string>
     <string name="translate_tap_to_reveal">Tap to reveal</string>
     <string name="translate_show_more">Show more</string>

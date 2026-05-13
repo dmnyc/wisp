@@ -1494,7 +1494,8 @@ private fun FeedItem(
             userZapPollVote = userZapPollVote,
             onZapPollVote = onZapPollVote,
             translationState = translationState,
-            onTranslate = { viewModel.translateEvent(event.id, event.content) }
+            onTranslate = { viewModel.translateEvent(event.id, event.content) },
+            autoTranslate = viewModel.interfacePrefs.isAutoTranslate()
         )
     }
 }

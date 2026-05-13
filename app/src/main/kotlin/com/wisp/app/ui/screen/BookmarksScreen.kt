@@ -45,6 +45,7 @@ fun BookmarksScreen(
     onToggleFollow: (String) -> Unit = {},
     onBlockUser: (String) -> Unit = {},
     translationRepo: TranslationRepository? = null,
+    autoTranslate: Boolean = false,
     onPollVote: (String, List<String>) -> Unit = { _, _ -> },
     onZapPollVote: (String, Int) -> Unit = { _, _ -> }
 ) {
@@ -143,6 +144,7 @@ fun BookmarksScreen(
                         isOwnEvent = event.pubkey == userPubkey,
                         translationState = translationState,
                         onTranslate = { translationRepo?.translate(event.id, event.content) },
+                        autoTranslate = autoTranslate,
                         pollVoteCounts = bmPollVoteCounts,
                         pollTotalVotes = bmPollTotalVotes,
                         userPollVotes = bmUserPollVotes,

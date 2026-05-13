@@ -50,7 +50,8 @@ fun BookmarkSetScreen(
     onRemoveFromSet: ((String) -> Unit)? = null,
     onToggleFollow: (String) -> Unit = {},
     onBlockUser: (String) -> Unit = {},
-    translationRepo: TranslationRepository? = null
+    translationRepo: TranslationRepository? = null,
+    autoTranslate: Boolean = false
 ) {
     val profileVersion by eventRepo.profileVersion.collectAsState()
     val reactionVersion by eventRepo.reactionVersion.collectAsState()
@@ -148,7 +149,8 @@ fun BookmarkSetScreen(
                         onBlockAuthor = { onBlockUser(event.pubkey) },
                         isOwnEvent = event.pubkey == userPubkey,
                         translationState = translationState,
-                        onTranslate = { translationRepo?.translate(event.id, event.content) }
+                        onTranslate = { translationRepo?.translate(event.id, event.content) },
+                        autoTranslate = autoTranslate
                     )
                 }
             }

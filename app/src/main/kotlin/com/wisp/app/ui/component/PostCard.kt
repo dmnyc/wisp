@@ -164,6 +164,7 @@ fun PostCard(
     onZapPollVote: (Int) -> Unit = {},
     translationState: TranslationState = TranslationState(),
     onTranslate: () -> Unit = {},
+    autoTranslate: Boolean = false,
     quoteDepth: Int = 0,
     modifier: Modifier = Modifier,
     showDivider: Boolean = true
@@ -212,6 +213,12 @@ fun PostCard(
     val hasReactionDetails = reactionDetails.isNotEmpty() || zapDetails.isNotEmpty() || repostDetails.isNotEmpty()
     var expandedDetails by remember { mutableStateOf(false) }
     var showTranslation by remember { mutableStateOf(true) }
+
+    LaunchedEffect(event.id, autoTranslate, translationState.status) {
+        if (autoTranslate && translationState.status == TranslationStatus.IDLE) {
+            onTranslate()
+        }
+    }
 
     Column(
         modifier = modifier

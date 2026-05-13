@@ -1124,6 +1124,7 @@ fun WispNavHost(
                 } } else null,
                 signer = activeSigner,
                 translationRepo = feedViewModel.translationRepo,
+                autoTranslate = feedViewModel.interfacePrefs.isAutoTranslate(),
                 onArticleClick = { kind, articleAuthor, articleDTag ->
                     navController.navigate("article/$kind/$articleAuthor/${java.net.URLEncoder.encode(articleDTag, "UTF-8")}")
                 },
@@ -1269,6 +1270,7 @@ fun WispNavHost(
                 onAddToList = { eventId -> addToListEventId = eventId },
                 onDeleteEvent = { eventId, kind -> feedViewModel.deleteEvent(eventId, kind) },
                 translationRepo = feedViewModel.translationRepo,
+                autoTranslate = feedViewModel.interfacePrefs.isAutoTranslate(),
                 onPollVote = { pollId, optionIds -> feedViewModel.publishPollVote(pollId, optionIds) },
                 onAddEmojiSet = { pubkey, dTag -> feedViewModel.addSetToEmojiList(pubkey, dTag) },
                 onRemoveEmojiSet = { pubkey, dTag -> feedViewModel.removeSetFromEmojiList(pubkey, dTag) },
@@ -1929,6 +1931,7 @@ fun WispNavHost(
                     navController.navigate("article/$kind/$author/${java.net.URLEncoder.encode(dTag, "UTF-8")}")
                 },
                 translationRepo = feedViewModel.translationRepo,
+                autoTranslate = feedViewModel.interfacePrefs.isAutoTranslate(),
                 resolvedEmojis = threadResolvedEmojis,
                 unicodeEmojis = threadUnicodeEmojis,
                 onOpenEmojiLibrary = { showThreadEmojiLibrary = true },
@@ -2105,6 +2108,7 @@ fun WispNavHost(
                 },
                 nip05Repo = feedViewModel.nip05Repo,
                 translationRepo = feedViewModel.translationRepo,
+                autoTranslate = feedViewModel.interfacePrefs.isAutoTranslate(),
                 onHashtagPicker = {
                     feedViewModel.requestHashtagPicker()
                     navController.popBackStack()
@@ -2256,6 +2260,7 @@ fun WispNavHost(
                 },
                 nip05Repo = feedViewModel.nip05Repo,
                 translationRepo = feedViewModel.translationRepo,
+                autoTranslate = feedViewModel.interfacePrefs.isAutoTranslate(),
                 onHashtagPicker = {
                     feedViewModel.requestHashtagPicker()
                     navController.popBackStack()
@@ -2846,6 +2851,7 @@ fun WispNavHost(
                 onToggleFollow = { pubkey -> feedViewModel.toggleFollow(pubkey) },
                 onBlockUser = { pubkey -> feedViewModel.blockUser(pubkey) },
                 translationRepo = feedViewModel.translationRepo,
+                autoTranslate = feedViewModel.interfacePrefs.isAutoTranslate(),
                 onPollVote = { pollId, optionIds -> feedViewModel.publishPollVote(pollId, optionIds) }
             )
         }
@@ -2895,7 +2901,8 @@ fun WispNavHost(
                 } else null,
                 onToggleFollow = { pubkey -> feedViewModel.toggleFollow(pubkey) },
                 onBlockUser = { pubkey -> feedViewModel.blockUser(pubkey) },
-                translationRepo = feedViewModel.translationRepo
+                translationRepo = feedViewModel.translationRepo,
+                autoTranslate = feedViewModel.interfacePrefs.isAutoTranslate()
             )
         }
 
@@ -3213,6 +3220,7 @@ fun WispNavHost(
                 onOpenEmojiLibrary = { showNotifEmojiLibrary = true },
                 zapError = feedViewModel.zapError,
                 translationRepo = feedViewModel.translationRepo,
+                autoTranslate = feedViewModel.interfacePrefs.isAutoTranslate(),
                 onPollVote = { pollId, optionIds -> feedViewModel.publishPollVote(pollId, optionIds) },
                 onUploadMedia = { uris, onUrl ->
                     notifReplyScope.launch {
