@@ -641,17 +641,4 @@
     <string name="title_delete_note">Удалить заметку?</string>
     <string name="msg_delete_note_confirm">Отправить запрос на удаление этой заметки на реле? Это не может быть гарантировано.</string>
 
-    <string name="local_relay_my_relay">Моё локальное реле</string>
-    <string name="local_relay_url_hint">ws://localhost:7777</string>
-    <string name="local_relay_remove">Удалить локальное реле</string>
-    <string name="local_relay_write_policy">Политика записи</string>
-    <string name="local_relay_own_notes">Мои заметки</string>
-    <string name="local_relay_tagged">Мои заметки и заметки с моим упоминанием</string>
-    <string name="local_relay_all_notes">Все заметки</string>
-    <string name="local_relay_kinds">Типы событий</string>
-    <string name="local_relay_kind_notes">Заметки (1)</string>
-    <string name="local_relay_kind_dms">ЛС (1059)</string>
-    <string name="local_relay_kind_zaps">Zap (9735)</string>
-    <string name="local_relay_add_kind">Добавить тип</string>
-    <string name="local_relay_invalid_url">Недопустимый URL локального реле</string>
 </resources>

@@ -9,8 +9,6 @@ import com.wisp.app.nostr.Nip51
 import com.wisp.app.nostr.Nip65
 import com.wisp.app.nostr.NostrEvent
 import com.wisp.app.nostr.NostrSigner
-import com.wisp.app.relay.LocalRelayConfig
-import com.wisp.app.relay.LocalRelayWritePolicy
 import com.wisp.app.relay.RelayConfig
 import com.wisp.app.relay.RelayPool
 import com.wisp.app.relay.RelaySetType
@@ -30,7 +28,6 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
     val dmRelays: StateFlow<List<String>> = keyRepo.dmRelaysFlow
     val searchRelays: StateFlow<List<String>> = keyRepo.searchRelaysFlow
     val blockedRelays: StateFlow<List<String>> = keyRepo.blockedRelaysFlow
-    val localRelay: StateFlow<LocalRelayConfig?> = keyRepo.localRelayFlow
 
     /** Re-point prefs at the current user's file so flows pick up their relay data. */
     fun reload() {
@@ -52,36 +49,26 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
     fun addRelay(): Boolean {
         val url = _newRelayUrl.value.trim().trimEnd('/')
         if (url.isBlank()) return false
+        if (!RelayConfig.isValidUrl(url)) return false
 
         when (_selectedTab.value) {
-            RelaySetType.LOCAL -> {
-                if (!RelayConfig.isLocalRelayUrl(url)) return false
-                if (localRelay.value != null) return false
-                keyRepo.saveLocalRelay(LocalRelayConfig(url))
+            RelaySetType.GENERAL -> {
+                if (relays.value.any { it.url == url }) return false
+                keyRepo.saveRelays(relays.value + RelayConfig(url))
             }
-            else -> {
-                if (!RelayConfig.isValidUrl(url)) return false
-                when (_selectedTab.value) {
-                    RelaySetType.GENERAL -> {
-                        if (relays.value.any { it.url == url }) return false
-                        keyRepo.saveRelays(relays.value + RelayConfig(url))
-                    }
-                    RelaySetType.DM -> {
-                        if (url in dmRelays.value) return false
-                        keyRepo.saveDmRelays(dmRelays.value + url)
-                    }
-                    RelaySetType.SEARCH -> {
-                        if (url in searchRelays.value) return false
-                        keyRepo.saveSearchRelays(searchRelays.value + url)
-                    }
-                    RelaySetType.BLOCKED -> {
-                        if (url in blockedRelays.value) return false
-                        val updated = blockedRelays.value + url
-                        keyRepo.saveBlockedRelays(updated)
-                        relayPool?.updateBlockedUrls(updated)
-                    }
-                    else -> {}
-                }
+            RelaySetType.DM -> {
+                if (url in dmRelays.value) return false
+                keyRepo.saveDmRelays(dmRelays.value + url)
+            }
+            RelaySetType.SEARCH -> {
+                if (url in searchRelays.value) return false
+                keyRepo.saveSearchRelays(searchRelays.value + url)
+            }
+            RelaySetType.BLOCKED -> {
+                if (url in blockedRelays.value) return false
+                val updated = blockedRelays.value + url
+                keyRepo.saveBlockedRelays(updated)
+                relayPool?.updateBlockedUrls(updated)
             }
         }
         _newRelayUrl.value = ""
@@ -103,9 +90,6 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
                 val updated = blockedRelays.value.filter { it != url }
                 keyRepo.saveBlockedRelays(updated)
                 relayPool?.updateBlockedUrls(updated)
-            }
-            RelaySetType.LOCAL -> {
-                keyRepo.saveLocalRelay(null)
             }
         }
     }
@@ -131,46 +115,26 @@ class RelayViewModel(app: Application) : AndroidViewModel(app) {
         keyRepo.saveRelays(updated)
     }
 
-    fun toggleLocalRelayEnabled() {
-        val current = localRelay.value ?: return
-        keyRepo.saveLocalRelay(current.copy(enabled = !current.enabled))
-    }
-
-    fun updateLocalRelayPolicy(writePolicy: LocalRelayWritePolicy) {
-        val current = localRelay.value ?: return
-        keyRepo.saveLocalRelay(current.copy(writePolicy = writePolicy))
-    }
-
-    fun updateLocalRelayKinds(kinds: Set<Int>) {
-        val current = localRelay.value ?: return
-        keyRepo.saveLocalRelay(current.copy(kinds = kinds))
-    }
-
     fun publishRelayList(relayPool: RelayPool, signer: NostrSigner? = null): Boolean {
         val s = signer ?: keyRepo.getKeypair()?.let { LocalSigner(it.privkey, it.pubkey) } ?: return false
         return try {
             val tab = _selectedTab.value
             val tags: List<List<String>>
-            val kind: Int
+            val kind: Int = tab.eventKind
 
             when (tab) {
                 RelaySetType.GENERAL -> {
                     tags = Nip65.buildRelayTags(relays.value)
-                    kind = tab.eventKind
                 }
                 RelaySetType.DM -> {
                     tags = Nip51.buildRelaySetTags(dmRelays.value)
-                    kind = tab.eventKind
                 }
                 RelaySetType.SEARCH -> {
                     tags = Nip51.buildRelaySetTags(searchRelays.value)
-                    kind = tab.eventKind
                 }
                 RelaySetType.BLOCKED -> {
                     tags = Nip51.buildRelaySetTags(blockedRelays.value)
-                    kind = tab.eventKind
                 }
-                RelaySetType.LOCAL -> return false // Local relays are never published
             }
 
             viewModelScope.launch {

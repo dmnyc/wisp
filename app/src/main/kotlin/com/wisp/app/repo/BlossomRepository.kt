@@ -55,7 +55,7 @@ class BlossomRepository(private val context: Context, pubkeyHex: String? = null)
 
     // In-memory reset only. `prefs` is shared with KeyRepository
     // (`wisp_prefs_{pubkey}`), so `prefs.edit().clear()` would also wipe
-    // `local_relay`, `relays`, `dm_relays`, etc. `reload(newPubkey)` below
+    // `relays`, `dm_relays`, etc. `reload(newPubkey)` below
     // repoints to the new account's file.
     fun clear() {
         _servers.value = listOf(Blossom.DEFAULT_SERVER)

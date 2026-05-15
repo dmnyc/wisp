@@ -1,13 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!--
-      Allow cleartext (ws://) globally. This is safe because:
-      - All network relay validation (isValidUrl) requires wss://
-      - Only local relays (isLocalRelayUrl) accept ws://
-      - Needed because Android's domain-config doesn't match IP addresses
-        (127.0.0.1, 192.168.*, 10.*) which local relays commonly use.
-    -->
-    <base-config cleartextTrafficPermitted="true">
+    <!-- All relay URLs are validated as wss://; cleartext is never required. -->
+    <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>
