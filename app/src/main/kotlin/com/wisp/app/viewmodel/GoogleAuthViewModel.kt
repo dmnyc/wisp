@@ -6,6 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.wisp.app.auth.BackupCrypto
+import com.wisp.app.auth.DriveAuthorizationExpiredException
 import com.wisp.app.auth.DriveBackupService
 import com.wisp.app.auth.GoogleSignInException
 import com.wisp.app.auth.GoogleSignInManager
@@ -97,13 +98,14 @@ class GoogleAuthViewModel(app: Application) : AndroidViewModel(app) {
                 _state.value = State.CheckingDrive
                 Log.d(TAG, "state -> CheckingDrive")
 
-                val files = driveService.listBackups(result.accessToken)
+                val files = listBackupsWithRefresh(manager, activity)
+                val activeToken = pendingAccessToken ?: result.accessToken
                 Log.d(TAG, "listBackups returned ${files.size} file(s)")
 
                 val summaries = files.mapNotNull { file ->
                     val npub = file.npubFromName ?: try {
                         // Legacy file with no npub in the filename — decrypt to learn it.
-                        val payload = driveService.downloadBackup(result.accessToken, file.fileId)
+                        val payload = driveService.downloadBackup(activeToken, file.fileId)
                         val nsec = BackupCrypto.decryptNsec(payload, backupKey)
                         Nip19.npubEncode(Keys.xOnlyPubkey(nsec))
                     } catch (e: Exception) {
@@ -133,6 +135,28 @@ class GoogleAuthViewModel(app: Application) : AndroidViewModel(app) {
                 Log.w(TAG, "Exception during sign-in flow", e)
                 _state.value = State.Error(e.message ?: "Something went wrong.")
             }
+        }
+    }
+
+    /**
+     * Calls `listBackups` with the pending access token; if Drive returns 401,
+     * clears the stale token from Play Services' cache and re-runs the
+     * authorization flow (which surfaces a consent prompt when the user has
+     * revoked Wisp's authorization), then retries once.
+     */
+    private suspend fun listBackupsWithRefresh(
+        manager: GoogleSignInManager,
+        activity: ComponentActivity
+    ): List<DriveBackupService.BackupFile> {
+        val token = pendingAccessToken ?: error("no pending access token")
+        return try {
+            driveService.listBackups(token)
+        } catch (e: DriveAuthorizationExpiredException) {
+            Log.w(TAG, "Drive returned 401; clearing stale token and re-authorizing", e)
+            val fresh = manager.refreshDriveAccessToken(activity, e.staleToken)
+            pendingAccessToken = fresh
+            Log.d(TAG, "refresh complete; retrying listBackups")
+            driveService.listBackups(fresh)
         }
     }
 

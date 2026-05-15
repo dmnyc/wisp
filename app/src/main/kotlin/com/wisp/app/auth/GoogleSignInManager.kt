@@ -2,6 +2,7 @@ package com.wisp.app.auth
 
 import android.app.PendingIntent
 import android.content.Context
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -9,13 +10,16 @@ import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialException
+import com.google.android.gms.auth.GoogleAuthUtil
 import com.google.android.gms.auth.api.identity.AuthorizationRequest
 import com.google.android.gms.auth.api.identity.Identity
 import com.google.android.gms.common.api.Scope
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.android.libraries.identity.googleid.GoogleIdTokenParsingException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
@@ -33,6 +37,7 @@ class GoogleSignInManager(
     context: Context,
     private val webClientId: String
 ) {
+    private val appContext = context.applicationContext
     private val credentialManager = CredentialManager.create(context)
 
     data class GoogleAuthResult(
@@ -83,6 +88,29 @@ class GoogleSignInManager(
         return parsed.id
     }
 
+    /**
+     * Clears the stale Drive access token from Play Services' local cache,
+     * then re-runs the authorization flow. When the user has revoked
+     * Wisp's consent in their Google account settings, the local cache may
+     * still hold a previously-issued token that Drive now rejects with 401.
+     * Clearing forces `authorize()` to contact Google, which returns a
+     * resolution PendingIntent so the user can re-consent.
+     *
+     * Best-effort: if `clearToken` itself fails (network, Play Services
+     * unavailable), we still re-call `authorize()` — Play Services may
+     * surface the resolution anyway once the upstream auth state is checked.
+     */
+    suspend fun refreshDriveAccessToken(activity: ComponentActivity, staleToken: String): String {
+        withContext(Dispatchers.IO) {
+            try {
+                GoogleAuthUtil.clearToken(appContext, staleToken)
+            } catch (e: Exception) {
+                Log.w(TAG, "GoogleAuthUtil.clearToken failed; continuing with authorize() anyway", e)
+            }
+        }
+        return getDriveAccessToken(activity)
+    }
+
     private suspend fun getDriveAccessToken(activity: ComponentActivity): String {
         val authClient = Identity.getAuthorizationClient(activity)
         val request = AuthorizationRequest.Builder()
@@ -131,6 +159,7 @@ class GoogleSignInManager(
     }
 
     companion object {
+        private const val TAG = "GoogleSignInManager"
         private const val DRIVE_APPDATA_SCOPE = "https://www.googleapis.com/auth/drive.appdata"
     }
 }

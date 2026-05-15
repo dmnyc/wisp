@@ -15,6 +15,19 @@ import java.io.IOException
 import java.util.UUID
 
 /**
+ * Thrown when Drive returns 401 on a request authenticated with the supplied
+ * access token. Caller must clear the token from the Play Services cache (via
+ * `GoogleAuthUtil.clearToken`) and obtain a fresh one — most commonly because
+ * the user revoked Wisp's authorization from their Google account settings.
+ *
+ * The stale token is exposed so the caller can pass it to `clearToken`.
+ */
+class DriveAuthorizationExpiredException(
+    val staleToken: String,
+    message: String
+) : IOException(message)
+
+/**
  * Minimal Drive REST v3 client targeted at the user's appDataFolder.
  *
  * One backup file per Nostr account. Filenames follow `wisp_nsec_<npub>.bin`
@@ -26,6 +39,15 @@ class DriveBackupService(
     private val httpClient: OkHttpClient = OkHttpClient()
 ) {
     private val json = Json { ignoreUnknownKeys = true }
+
+    private fun throwIfExpired(accessToken: String, response: okhttp3.Response, op: String) {
+        if (response.code == 401) {
+            throw DriveAuthorizationExpiredException(
+                staleToken = accessToken,
+                message = "Drive $op failed: 401 (authorization expired or revoked)"
+            )
+        }
+    }
 
     data class BackupFile(val fileId: String, val name: String) {
         /** `npub1…` parsed from the filename, or null for the legacy unnamed backup. */
@@ -54,6 +76,7 @@ class DriveBackupService(
             .build()
 
         httpClient.newCall(req).execute().use { response ->
+            throwIfExpired(accessToken, response, "list")
             if (!response.isSuccessful) {
                 throw IOException("Drive list failed: ${response.code} ${response.message}")
             }
@@ -78,6 +101,7 @@ class DriveBackupService(
                 .build()
 
             httpClient.newCall(req).execute().use { response ->
+                throwIfExpired(accessToken, response, "download")
                 if (!response.isSuccessful) {
                     throw IOException("Drive download failed: ${response.code} ${response.message}")
                 }
@@ -124,6 +148,7 @@ class DriveBackupService(
                 .build()
 
             httpClient.newCall(req).execute().use { response ->
+                throwIfExpired(accessToken, response, "upload")
                 if (!response.isSuccessful) {
                     throw IOException("Drive upload failed: ${response.code} ${response.message}")
                 }
