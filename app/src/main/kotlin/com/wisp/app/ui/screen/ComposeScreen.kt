@@ -62,7 +62,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.BarChart
-import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.Schedule
@@ -339,7 +339,10 @@ fun ComposeScreen(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        IconButton(onClick = { viewModel.toggleExplicit() }) {
+                        IconButton(onClick = {
+                            viewModel.toggleExplicit()
+                            android.widget.Toast.makeText(context, "NSFW: hides the post behind a sensitive-content warning", android.widget.Toast.LENGTH_SHORT).show()
+                        }) {
                             Icon(
                                 Icons.Outlined.Warning,
                                 contentDescription = "Mark as explicit",
@@ -348,7 +351,10 @@ fun ComposeScreen(
                             )
                         }
 
-                        IconButton(onClick = { powPrefs?.let { viewModel.togglePow(it) } }) {
+                        IconButton(onClick = {
+                            powPrefs?.let { viewModel.togglePow(it) }
+                            android.widget.Toast.makeText(context, "Proof of work: mines a hash before publishing to deter spam", android.widget.Toast.LENGTH_SHORT).show()
+                        }) {
                             Icon(
                                 Icons.Outlined.Shield,
                                 contentDescription = "Proof of Work",
@@ -733,7 +739,10 @@ fun ComposeScreen(
                             Icon(Icons.Outlined.Image, contentDescription = "Attach media")
                         }
 
-                        IconButton(onClick = { viewModel.toggleExplicit() }) {
+                        IconButton(onClick = {
+                            viewModel.toggleExplicit()
+                            android.widget.Toast.makeText(context, "NSFW: hides the post behind a sensitive-content warning", android.widget.Toast.LENGTH_SHORT).show()
+                        }) {
                             Icon(
                                 Icons.Outlined.Warning,
                                 contentDescription = "Mark as explicit",
@@ -742,7 +751,10 @@ fun ComposeScreen(
                             )
                         }
 
-                        IconButton(onClick = { powPrefs?.let { viewModel.togglePow(it) } }) {
+                        IconButton(onClick = {
+                            powPrefs?.let { viewModel.togglePow(it) }
+                            android.widget.Toast.makeText(context, "Proof of work: mines a hash before publishing to deter spam", android.widget.Toast.LENGTH_SHORT).show()
+                        }) {
                             Icon(
                                 Icons.Outlined.Shield,
                                 contentDescription = "Proof of Work",
@@ -763,9 +775,12 @@ fun ComposeScreen(
                         // Private reply toggle: only meaningful for replies in plain text mode
                         // (private replies don't carry gallery/poll/schedule/quote payloads in v1).
                         if (replyTo != null && quoteTo == null && !galleryMode && !pollEnabled && !scheduleEnabled) {
-                            IconButton(onClick = { viewModel.togglePrivateReply() }) {
+                            IconButton(onClick = {
+                                viewModel.togglePrivateReply()
+                                android.widget.Toast.makeText(context, "Private reply: encrypts the reply to the author only", android.widget.Toast.LENGTH_SHORT).show()
+                            }) {
                                 Icon(
-                                    imageVector = Icons.Outlined.Lock,
+                                    imageVector = Icons.Outlined.VisibilityOff,
                                     contentDescription = "Private reply",
                                     tint = if (privateReply) androidx.compose.ui.graphics.Color(0xFFFF8C00)
                                            else MaterialTheme.colorScheme.onSurfaceVariant

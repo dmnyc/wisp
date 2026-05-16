@@ -24,8 +24,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Repeat
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -351,7 +351,7 @@ fun PostCard(
             }
             if (isPrivate) {
                 Icon(
-                    imageVector = Icons.Outlined.Lock,
+                    imageVector = Icons.Outlined.VisibilityOff,
                     contentDescription = "Private reply",
                     modifier = Modifier.size(14.dp),
                     tint = Color(0xFFFF8C00)
