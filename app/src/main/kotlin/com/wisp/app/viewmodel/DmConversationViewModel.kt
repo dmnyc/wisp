@@ -532,50 +532,7 @@ class DmConversationViewModel(app: Application) : AndroidViewModel(app) {
      */
     private suspend fun fetchRecipientDmRelays(relayPool: RelayPool, forceRefresh: Boolean = false): List<String> {
         val repo = dmRepo ?: return emptyList()
-
-        // Cache hit (skip when forcing a refresh)
-        if (!forceRefresh) {
-            repo.getCachedDmRelays(peerPubkey)?.let { return it }
-        }
-
-        // Send REQ for kind 10050 to indexer relays (most likely to have relay metadata)
-        val subId = "dm_relay_${peerPubkey.take(8)}"
-        val filter = Filter(
-            kinds = listOf(Nip51.KIND_DM_RELAYS),
-            authors = listOf(peerPubkey),
-            limit = 1
-        )
-        val reqMsg = ClientMessage.req(subId, filter)
-        for (url in RelayConfig.DEFAULT_INDEXER_RELAYS) {
-            relayPool.sendToRelayOrEphemeral(url, reqMsg, skipBadCheck = true)
-        }
-        // Also broadcast to connected relays for additional coverage
-        relayPool.sendToAll(reqMsg)
-
-        // Collect all responses within 4s; pick the freshest (highest created_at)
-        val results = mutableListOf<RelayEvent>()
-        withTimeoutOrNull(4000L) {
-            relayPool.relayEvents
-                .filter { it.subscriptionId == subId }
-                .collect { results.add(it) }
-        }
-
-        // Close subscription
-        val closeMsg = ClientMessage.close(subId)
-        for (url in RelayConfig.DEFAULT_INDEXER_RELAYS) {
-            relayPool.sendToRelay(url, closeMsg)
-        }
-        relayPool.sendToAll(closeMsg)
-
-        val best = results.maxByOrNull { it.event.created_at }
-        if (best != null) {
-            val urls = Nip51.parseRelaySet(best.event)
-            if (urls.isNotEmpty()) {
-                repo.cacheDmRelays(peerPubkey, urls)
-                return urls
-            }
-        }
-        return emptyList()
+        return com.wisp.app.repo.DmRelayLookup.fetch(peerPubkey, relayPool, repo, forceRefresh)
     }
 
     /**

@@ -140,6 +140,7 @@ fun PostCard(
     onBlockAuthor: () -> Unit = {},
     isFollowingAuthor: Boolean = false,
     isOwnEvent: Boolean = false,
+    isPrivate: Boolean = false,
     nip05Repo: Nip05Repository? = null,
     onAddToList: () -> Unit = {},
     isInList: Boolean = false,
@@ -346,6 +347,15 @@ fun PostCard(
                         onClick = onProfileClick
                     )
                 }
+            }
+            if (isPrivate) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_private_zap),
+                    contentDescription = "Private reply",
+                    modifier = Modifier.size(14.dp),
+                    tint = Color(0xFFFF8C00)
+                )
+                Spacer(Modifier.width(4.dp))
             }
             Text(
                 text = timestamp,

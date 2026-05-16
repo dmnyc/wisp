@@ -16,6 +16,7 @@ import com.madebyevan.thumbhash.ThumbHash
 import com.wisp.app.nostr.ClientMessage
 import com.wisp.app.nostr.Keys
 import com.wisp.app.nostr.Nip10
+import com.wisp.app.nostr.Nip17
 import com.wisp.app.nostr.Nip30
 import com.wisp.app.nostr.Nip18
 import com.wisp.app.nostr.Nip19
@@ -31,12 +32,15 @@ import com.wisp.app.relay.OutboxRouter
 import com.wisp.app.relay.RelayPool
 import com.wisp.app.repo.BlossomRepository
 import com.wisp.app.repo.ContactRepository
+import com.wisp.app.repo.DmRelayLookup
+import com.wisp.app.repo.DmRepository
 import com.wisp.app.repo.KeyRepository
 import com.wisp.app.repo.MentionCandidate
 import com.wisp.app.repo.MentionSearchRepository
 import com.wisp.app.repo.EventRepository
 import com.wisp.app.repo.InterfacePreferences
 import com.wisp.app.repo.ProfileRepository
+import com.wisp.app.repo.RelayListRepository
 import com.wisp.app.R
 import com.wisp.app.ui.util.GifToMp4Converter
 import com.wisp.app.ui.util.MediaCompressor
@@ -114,6 +118,13 @@ class ComposeViewModel(app: Application, private val savedStateHandle: SavedStat
 
     fun toggleExplicit() {
         _explicit.value = !_explicit.value
+    }
+
+    private val _privateReply = MutableStateFlow(false)
+    val privateReply: StateFlow<Boolean> = _privateReply
+
+    fun togglePrivateReply() {
+        _privateReply.value = !_privateReply.value
     }
 
     private val _powEnabled = MutableStateFlow(false)
@@ -236,15 +247,27 @@ class ComposeViewModel(app: Application, private val savedStateHandle: SavedStat
     private var pendingPublish: (() -> Unit)? = null
     private var mentionSearchRepo: MentionSearchRepository? = null
     private var eventRepo: EventRepository? = null
+    private var dmRepo: DmRepository? = null
+    private var relayListRepo: RelayListRepository? = null
     private var initialized = false
 
     var currentDraftId: String? = null
         private set
 
-    fun init(profileRepo: ProfileRepository, contactRepo: ContactRepository, relayPool: RelayPool, eventRepo: EventRepository? = null, eventPersistence: com.wisp.app.db.EventPersistence? = null) {
+    fun init(
+        profileRepo: ProfileRepository,
+        contactRepo: ContactRepository,
+        relayPool: RelayPool,
+        eventRepo: EventRepository? = null,
+        eventPersistence: com.wisp.app.db.EventPersistence? = null,
+        dmRepo: DmRepository? = null,
+        relayListRepo: RelayListRepository? = null
+    ) {
         if (initialized) return
         initialized = true
         this.eventRepo = eventRepo
+        this.dmRepo = dmRepo
+        this.relayListRepo = relayListRepo
         mentionSearchRepo = MentionSearchRepository(profileRepo, contactRepo, relayPool, keyRepo).also {
             it.eventPersistence = eventPersistence
         }
@@ -628,6 +651,18 @@ class ComposeViewModel(app: Application, private val savedStateHandle: SavedStat
                 tags.add(listOf("p", pubkey))
             }
         }
+
+        // NIP-17 private reply: gift-wrap to the recipient's DM relays instead of publishing
+        // publicly. The compose UI hides the toggle in gallery/poll/schedule/quote modes, so we
+        // branch before those tag-building paths and emit just the reply + mentions + hashtags
+        // + emojis inside the encrypted rumor.
+        if (replyTo != null && _privateReply.value) {
+            for (hashtag in _hashtags.value) tags.add(listOf("t", hashtag))
+            tags.addAll(Nip30.buildEmojiTagsForContent(content, resolvedEmojis))
+            if (interfacePrefs.isClientTagEnabled()) tags.add(listOf("client", "Wisp"))
+            return publishPrivateReply(content, replyTo, tags, signer, relayPool)
+        }
+
         val finalContent = if (quoteTo != null) {
             val quoteHint = outboxRouter?.getRelayHint(quoteTo.pubkey) ?: ""
             tags.addAll(Nip18.buildQuoteTags(quoteTo, quoteHint))
@@ -853,6 +888,108 @@ class ComposeViewModel(app: Application, private val savedStateHandle: SavedStat
         return sentCount
     }
 
+    private suspend fun publishPrivateReply(
+        content: String,
+        replyTo: NostrEvent,
+        replyTags: List<List<String>>,
+        signer: NostrSigner,
+        relayPool: RelayPool
+    ): Int {
+        val dmRepoLocal = dmRepo
+        if (dmRepoLocal == null) {
+            _error.value = getApplication<Application>().getString(R.string.error_publish_failed, "DM repo unavailable")
+            _publishing.value = false
+            return 0
+        }
+        val userPubkey = signer.pubkeyHex
+        val rumorCreatedAt = System.currentTimeMillis() / 1000
+
+        val recipientWrap = try {
+            Nip17.createGiftWrapRemote(
+                signer = signer,
+                recipientPubkeyHex = replyTo.pubkey,
+                message = content,
+                replyTags = replyTags,
+                rumorKind = 1,
+                createdAt = rumorCreatedAt
+            )
+        } catch (e: Exception) {
+            _error.value = getApplication<Application>().getString(R.string.error_publish_failed, e.message ?: "wrap failed")
+            _publishing.value = false
+            return 0
+        }
+        val selfWrap = Nip17.createGiftWrapRemote(
+            signer = signer,
+            recipientPubkeyHex = userPubkey,
+            message = content,
+            replyTags = replyTags,
+            rumorKind = 1,
+            createdAt = rumorCreatedAt
+        )
+
+        // Recipient relay resolution: DM relays → read relays → write relays → own write relays (last resort).
+        val recipientRelays: List<String> = run {
+            val dmRelays = DmRelayLookup.fetch(replyTo.pubkey, relayPool, dmRepoLocal)
+            if (dmRelays.isNotEmpty()) return@run dmRelays
+            relayListRepo?.getReadRelays(replyTo.pubkey)?.takeIf { it.isNotEmpty() }?.let { return@run it }
+            relayListRepo?.getWriteRelays(replyTo.pubkey)?.takeIf { it.isNotEmpty() }?.let { return@run it }
+            emptyList()
+        }
+
+        val recipientMsg = ClientMessage.event(recipientWrap)
+        var sentCount = 0
+        if (recipientRelays.isNotEmpty()) {
+            for (url in recipientRelays) {
+                if (relayPool.sendToRelayOrEphemeral(url, recipientMsg, skipBadCheck = true)) sentCount++
+            }
+        } else {
+            sentCount += relayPool.sendToWriteRelays(recipientMsg)
+        }
+
+        if (sentCount == 0) {
+            _error.value = getApplication<Application>().getString(R.string.error_no_relays_connected)
+            _publishing.value = false
+            return 0
+        }
+
+        val selfMsg = ClientMessage.event(selfWrap)
+        if (relayPool.hasDmRelays()) relayPool.sendToDmRelays(selfMsg)
+        else relayPool.sendToWriteRelays(selfMsg)
+
+        // Optimistic local insert so the sender sees their own reply in-thread immediately.
+        val rumorId = NostrEvent.computeId(userPubkey, rumorCreatedAt, 1, replyTags, content)
+        val synthetic = NostrEvent(
+            id = rumorId,
+            pubkey = userPubkey,
+            created_at = rumorCreatedAt,
+            kind = 1,
+            tags = replyTags,
+            content = content,
+            sig = ""
+        )
+        eventRepo?.markPrivateReply(rumorId)
+        eventRepo?.cacheEvent(synthetic)
+        eventRepo?.addReplyCount(replyTo.id, rumorId)
+        Nip10.getRootId(replyTo)?.takeIf { it != replyTo.id }?.let { rootId ->
+            eventRepo?.addReplyCount(rootId, rumorId)
+        }
+        // Dedup our own self-wrap when it arrives back via the dms subscription.
+        dmRepoLocal.markGiftWrapSeen(selfWrap.id, rumorId)
+
+        deleteDraftOnPublish(relayPool, signer)
+        _content.value = TextFieldValue()
+        _mentions.value = emptyList()
+        savedStateHandle.remove<String>("draft_content")
+        savedStateHandle.remove<Array<String>>("draft_mentions")
+        _uploadedUrls.value = emptyList()
+        _uploadedMediaMeta.clear()
+        _error.value = null
+        _publishing.value = false
+        _privateReply.value = false
+
+        return sentCount
+    }
+
     private fun saveMentionsToState() {
         savedStateHandle["draft_mentions"] = _mentions.value.map { "${it.start},${it.end},${it.pubkey}" }.toTypedArray()
     }
@@ -1065,6 +1202,7 @@ class ComposeViewModel(app: Application, private val savedStateHandle: SavedStat
         _explicit.value = false
         _hashtags.value = emptyList()
         _powEnabled.value = false
+        _privateReply.value = false
         _galleryMode.value = false
         _galleryHasVideo.value = false
         _uploadedMediaMeta.clear()

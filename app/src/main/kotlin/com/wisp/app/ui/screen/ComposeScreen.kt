@@ -107,6 +107,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -180,6 +181,7 @@ fun ComposeScreen(
     val zapPollConsensus by viewModel.zapPollConsensus.collectAsState()
     val scheduleEnabled by viewModel.scheduleEnabled.collectAsState()
     val scheduleTimestamp by viewModel.scheduleTimestamp.collectAsState()
+    val privateReply by viewModel.privateReply.collectAsState()
     val powStatus = powManager?.status?.collectAsState()?.value ?: PowStatus.Idle
     val isMiningBusy = powStatus is PowStatus.Mining
     val context = LocalContext.current
@@ -751,6 +753,19 @@ fun ComposeScreen(
                                 tint = if (pollEnabled) MaterialTheme.colorScheme.primary
                                        else MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                        }
+
+                        // Private reply toggle: only meaningful for replies in plain text mode
+                        // (private replies don't carry gallery/poll/schedule/quote payloads in v1).
+                        if (replyTo != null && quoteTo == null && !galleryMode && !pollEnabled && !scheduleEnabled) {
+                            IconButton(onClick = { viewModel.togglePrivateReply() }) {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_private_zap),
+                                    contentDescription = "Private reply",
+                                    tint = if (privateReply) androidx.compose.ui.graphics.Color(0xFFFF8C00)
+                                           else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
 
                         IconButton(onClick = {

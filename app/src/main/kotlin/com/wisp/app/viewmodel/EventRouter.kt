@@ -617,6 +617,13 @@ class EventRouter(
             return
         }
 
+        // NIP-17 private reply — kind 1 rumor with NIP-10 reply tags.
+        // Surface as a normal reply in threads + notifications, flagged as private.
+        if (rumor.kind == 1) {
+            handlePrivateReply(event, rumor, myPubkey)
+            return
+        }
+
         val participants = Nip17.getConversationParticipants(rumor, myPubkey)
         if (participants.any { muteRepo.isBlocked(it) }) return
 
@@ -643,5 +650,33 @@ class EventRouter(
             debugRumorJson = Nip17.rumorToJson(rumor)
         )
         dmRepo.addMessage(msg, convKey)
+    }
+
+    private fun handlePrivateReply(wrap: NostrEvent, rumor: Nip17.Rumor, myPubkey: String) {
+        if (muteRepo.isBlocked(rumor.pubkey)) return
+
+        val rumorId = Nip17.computeRumorId(rumor)
+        val synthetic = NostrEvent(
+            id = rumorId,
+            pubkey = rumor.pubkey,
+            created_at = rumor.createdAt,
+            kind = 1,
+            tags = rumor.tags,
+            content = rumor.content,
+            sig = ""
+        )
+        eventRepo.markPrivateReply(rumorId)
+        eventRepo.cacheEvent(synthetic)
+        if (!Nip10.isStandaloneQuote(synthetic)) {
+            val parentId = Nip10.getReplyTarget(synthetic)
+            if (parentId != null) eventRepo.addReplyCount(parentId, synthetic.id)
+        }
+        // Self-copy wraps from another device land here too — skip the notification, but
+        // the cache write above still surfaces the reply in our thread view.
+        if (rumor.pubkey == myPubkey) return
+        notifRepo.addEvent(synthetic, myPubkey, replyToMyEvent = true, source = "gift-wrap-private-reply")
+        if (eventRepo.getProfileData(rumor.pubkey) == null) {
+            metadataFetcher.addToPendingProfiles(rumor.pubkey)
+        }
     }
 }
