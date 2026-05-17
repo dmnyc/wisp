@@ -39,6 +39,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.wisp.app.R
+import com.wisp.app.nostr.Nip05
 import com.wisp.app.repo.ContactRepository
 import com.wisp.app.repo.EventRepository
 import com.wisp.app.ui.component.ProfilePicture
@@ -156,7 +157,7 @@ fun ContactPickerScreen(
                         )
                         if (profile?.nip05 != null) {
                             Text(
-                                text = profile.nip05,
+                                text = Nip05.formatForDisplay(profile.nip05),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
