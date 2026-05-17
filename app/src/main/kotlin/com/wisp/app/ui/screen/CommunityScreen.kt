@@ -40,6 +40,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.wisp.app.nostr.Nip05
 import com.wisp.app.nostr.ProfileData
 import com.wisp.app.repo.ContactRepository
 import com.wisp.app.ui.component.FollowButton
@@ -163,7 +164,7 @@ private fun ProfileCard(
                 )
                 if (!profile.nip05.isNullOrBlank()) {
                     Text(
-                        text = profile.nip05,
+                        text = Nip05.formatForDisplay(profile.nip05),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,

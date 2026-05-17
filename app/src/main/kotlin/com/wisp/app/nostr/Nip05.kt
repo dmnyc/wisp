@@ -62,4 +62,8 @@ object Nip05 {
                 Nip05Result.ERROR
             }
         }
+
+    /** Strip the `_` root-domain local part for display (`_@domain` → `@domain`). */
+    fun formatForDisplay(identifier: String): String =
+        if (identifier.startsWith("_@")) identifier.substring(1) else identifier
 }

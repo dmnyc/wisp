@@ -71,6 +71,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.wisp.app.nostr.Nip05
 import com.wisp.app.nostr.ProfileData
 import com.wisp.app.repo.AccountInfo
 
@@ -188,7 +189,7 @@ fun WispDrawerContent(
             Spacer(Modifier.height(2.dp))
             if (!profile?.nip05.isNullOrBlank()) {
                 Text(
-                    text = profile!!.nip05!!,
+                    text = Nip05.formatForDisplay(profile!!.nip05!!),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,

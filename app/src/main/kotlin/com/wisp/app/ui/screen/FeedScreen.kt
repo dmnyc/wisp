@@ -76,6 +76,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.wisp.app.nostr.FollowSet
+import com.wisp.app.nostr.Nip05
 import com.wisp.app.nostr.Nip10
 import com.wisp.app.nostr.Nip69
 import com.wisp.app.nostr.NostrEvent
@@ -2644,7 +2645,7 @@ private fun TrendingUsersContent(
                             )
                             if (!profile.nip05.isNullOrBlank()) {
                                 Text(
-                                    profile.nip05,
+                                    Nip05.formatForDisplay(profile.nip05),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1,

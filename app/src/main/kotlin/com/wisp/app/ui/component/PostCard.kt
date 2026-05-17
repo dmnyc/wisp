@@ -68,6 +68,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.material3.Surface
+import com.wisp.app.nostr.Nip05
 import com.wisp.app.nostr.Nip10
 import com.wisp.app.nostr.Nip13
 import com.wisp.app.nostr.Nip19
@@ -1321,7 +1322,7 @@ internal fun Nip05Badge(
         )
     ) {
         Text(
-            text = nip05,
+            text = Nip05.formatForDisplay(nip05),
             style = MaterialTheme.typography.bodySmall,
             color = textColor,
             maxLines = maxLines,

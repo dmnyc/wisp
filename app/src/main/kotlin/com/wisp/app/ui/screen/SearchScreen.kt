@@ -63,6 +63,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.wisp.app.nostr.Nip02
+import com.wisp.app.nostr.Nip05
 import com.wisp.app.nostr.Nip69
 import com.wisp.app.nostr.NostrEvent
 import com.wisp.app.nostr.ProfileData
@@ -765,7 +766,7 @@ private fun AuthorFilter(
                         )
                         if (!profile.nip05.isNullOrBlank()) {
                             Text(
-                                text = profile.nip05,
+                                text = Nip05.formatForDisplay(profile.nip05),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
@@ -804,7 +805,7 @@ private fun UserResultItem(
             )
             if (!profile.nip05.isNullOrBlank()) {
                 Text(
-                    text = profile.nip05,
+                    text = Nip05.formatForDisplay(profile.nip05),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,

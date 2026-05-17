@@ -45,6 +45,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.wisp.app.nostr.Nip05
 import com.wisp.app.nostr.Nip30
 import com.wisp.app.nostr.Nip37
 import com.wisp.app.nostr.NostrEvent
@@ -222,7 +223,7 @@ private fun DraftItem(
                 )
                 if (!userProfile?.nip05.isNullOrBlank()) {
                     Text(
-                        text = userProfile!!.nip05!!,
+                        text = Nip05.formatForDisplay(userProfile!!.nip05!!),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.primary,
                         maxLines = 1,
@@ -308,7 +309,7 @@ private fun ScheduledPostItem(
                 )
                 if (!userProfile?.nip05.isNullOrBlank()) {
                     Text(
-                        text = userProfile!!.nip05!!,
+                        text = Nip05.formatForDisplay(userProfile!!.nip05!!),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.primary,
                         maxLines = 1,
