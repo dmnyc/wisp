@@ -70,6 +70,7 @@ import androidx.compose.material.icons.filled.CameraAlt
 
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material.icons.filled.Receipt
@@ -167,24 +168,31 @@ fun WalletScreen(
         viewModel.refreshState()
     }
 
+    // Hide the wallet app bar on the Home dashboard — the bottom-nav wallet
+    // tab is the entry point, and the dashboard's own top row (brand logo +
+    // refresh + settings) plays the role of the toolbar. Sub-pages keep the
+    // app bar so back-nav stays reachable.
+    val isHome = currentPage is WalletPage.Home || currentPage is WalletPage.ModeSelection
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
-            topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.title_wallet)) },
-                navigationIcon = {
-                    IconButton(onClick = {
-                        if (!viewModel.navigateBack()) {
-                            onBack()
+        topBar = {
+            if (!isHome) {
+                TopAppBar(
+                    title = { Text(stringResource(R.string.title_wallet)) },
+                    navigationIcon = {
+                        IconButton(onClick = {
+                            if (!viewModel.navigateBack()) {
+                                onBack()
+                            }
+                        }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.cd_back))
                         }
-                    }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.cd_back))
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surface
+                    )
                 )
-            )
+            }
         }
     ) { padding ->
         when (walletState) {
@@ -316,6 +324,7 @@ fun WalletScreen(
                             },
                             recentTransactions = viewModel.transactions.collectAsState().value,
                             profileLookup = remember(profileKey) { { viewModel.getProfileData(it) } },
+                            nwcNodeAlias = viewModel.nwcNodeAlias.collectAsState().value,
                             modifier = Modifier.padding(padding)
                         )
                     }
@@ -449,6 +458,10 @@ fun WalletScreen(
                         isDefaultWallet = viewModel.isDefaultWallet.collectAsState().value,
                         onCheckRelayBackups = { viewModel.checkRelayBackupStatuses() },
                         onDeleteRelayBackup = { viewModel.deleteRelayBackup() },
+                        sparkIdentityPubkey = viewModel.sparkIdentityPubkey.collectAsState().value,
+                        nwcNodeAlias = viewModel.nwcNodeAlias.collectAsState().value,
+                        nwcConnectionInfo = viewModel.nwcConnectionInfo.collectAsState().value,
+                        nwcSupportedMethods = viewModel.nwcSupportedMethods.collectAsState().value,
                         modifier = Modifier.padding(padding)
                     )
                     is WalletPage.LightningAddressSetup -> LightningAddressSetupContent(
@@ -529,6 +542,7 @@ fun WalletScreen(
                             },
                             recentTransactions = viewModel.transactions.collectAsState().value,
                             profileLookup = remember(profileKey) { { viewModel.getProfileData(it) } },
+                            nwcNodeAlias = viewModel.nwcNodeAlias.collectAsState().value,
                             modifier = Modifier.padding(padding)
                         )
                     }
@@ -707,6 +721,7 @@ private fun WalletHomeContent(
     onSetupAddress: () -> Unit = {},
     recentTransactions: List<WalletTransaction> = emptyList(),
     profileLookup: (String) -> com.wisp.app.nostr.ProfileData? = { null },
+    nwcNodeAlias: String? = null,
     modifier: Modifier = Modifier
 ) {
     val balanceSats = balanceMsats / 1000
@@ -760,14 +775,26 @@ private fun WalletHomeContent(
                     )
                 }
             } else {
-                Image(
-                    painter = painterResource(R.drawable.ic_nwc_logo),
-                    contentDescription = "NWC",
-                    modifier = Modifier.height(20.dp),
-                    colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(
-                        MaterialTheme.colorScheme.onSurface
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Native NWC brand colors — no colorFilter so the
+                    // baked-in palette renders.
+                    Image(
+                        painter = painterResource(R.drawable.ic_nwc_logo),
+                        contentDescription = "NWC",
+                        modifier = Modifier.height(22.dp)
                     )
-                )
+                    if (!nwcNodeAlias.isNullOrBlank()) {
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            nwcNodeAlias,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
             }
 
             Row {
@@ -2730,6 +2757,10 @@ private fun WalletSettingsContent(
     isDefaultWallet: Boolean = false,
     onCheckRelayBackups: () -> Unit = {},
     onDeleteRelayBackup: () -> Unit = {},
+    sparkIdentityPubkey: String? = null,
+    nwcNodeAlias: String? = null,
+    nwcConnectionInfo: com.wisp.app.repo.NwcRepository.ConnectionInfo? = null,
+    nwcSupportedMethods: List<String> = emptyList(),
     modifier: Modifier = Modifier
 ) {
     val clipboardManager = LocalClipboardManager.current
@@ -2841,6 +2872,26 @@ private fun WalletSettingsContent(
                 }
             }
         }
+
+        // ── Wallet Info expandable (Spark + NWC) ─────────────────
+        Spacer(Modifier.height(24.dp))
+        Text(
+            if (walletMode == WalletMode.NWC) "Wallet Connection" else "Wallet Info",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Spacer(Modifier.height(12.dp))
+        WalletInfoCard(
+            walletMode = walletMode,
+            sparkIdentityPubkey = sparkIdentityPubkey,
+            nwcNodeAlias = nwcNodeAlias,
+            nwcConnectionInfo = nwcConnectionInfo,
+            nwcSupportedMethods = nwcSupportedMethods,
+            lightningAddress = lightningAddress,
+            onCopy = { value ->
+                clipboardManager.setText(AnnotatedString(value))
+            }
+        )
 
         // Display section — only relevant when showing sats
         if (!fiatMode) {
@@ -3931,6 +3982,199 @@ private fun RestoreFromRelayContent(
 
         Spacer(Modifier.height(32.dp))
     }
+}
+
+/**
+ * Expandable card surfacing the active wallet's metadata. Collapsed
+ * shows just the brand mark (+ alias on NWC); tap expands to reveal
+ * the per-mode detail rows.
+ */
+@Composable
+private fun WalletInfoCard(
+    walletMode: WalletMode,
+    sparkIdentityPubkey: String?,
+    nwcNodeAlias: String?,
+    nwcConnectionInfo: com.wisp.app.repo.NwcRepository.ConnectionInfo?,
+    nwcSupportedMethods: List<String>,
+    lightningAddress: String?,
+    onCopy: (String) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { expanded = !expanded },
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(14.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (walletMode == WalletMode.SPARK) {
+                    Image(
+                        painter = painterResource(R.drawable.ic_spark_wordmark),
+                        contentDescription = "Spark",
+                        modifier = Modifier.height(18.dp),
+                        colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(
+                            MaterialTheme.colorScheme.onSurface
+                        )
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text("+", style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.width(6.dp))
+                    Image(
+                        painter = painterResource(R.drawable.ic_breez_logo),
+                        contentDescription = "Breez",
+                        modifier = Modifier.height(16.dp),
+                        colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(
+                            MaterialTheme.colorScheme.onSurface
+                        )
+                    )
+                } else {
+                    // NWC: native brand colors (no tint).
+                    Image(
+                        painter = painterResource(R.drawable.ic_nwc_logo),
+                        contentDescription = "NWC",
+                        modifier = Modifier.height(22.dp)
+                    )
+                    if (!nwcNodeAlias.isNullOrBlank()) {
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            nwcNodeAlias,
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                    } else {
+                        Spacer(Modifier.weight(1f))
+                    }
+                }
+                if (walletMode == WalletMode.SPARK) Spacer(Modifier.weight(1f))
+                Icon(
+                    if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                    contentDescription = if (expanded) "Collapse" else "Expand",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+
+            AnimatedVisibility(visible = expanded) {
+                Column(modifier = Modifier.padding(top = 16.dp)) {
+                    if (walletMode == WalletMode.SPARK) {
+                        if (!sparkIdentityPubkey.isNullOrBlank()) {
+                            WalletInfoRow("Wallet ID", truncateMiddle(sparkIdentityPubkey),
+                                onCopy = { onCopy(sparkIdentityPubkey) })
+                        }
+                        WalletInfoRow("Network", "Mainnet")
+                        WalletInfoRow(
+                            "SDK version",
+                            BuildConfig.BREEZ_SDK_VERSION
+                        )
+                    } else {
+                        nwcConnectionInfo?.let { info ->
+                            WalletInfoRow("Service pubkey", truncateMiddle(info.servicePubkeyHex),
+                                onCopy = { onCopy(info.servicePubkeyHex) })
+                            WalletInfoRow("Client pubkey", truncateMiddle(info.clientPubkeyHex),
+                                onCopy = { onCopy(info.clientPubkeyHex) })
+                            WalletInfoRow("Relay", info.relayUrl,
+                                onCopy = { onCopy(info.relayUrl) })
+                            WalletInfoRow("Encryption", info.encryption)
+                        }
+                        if (!lightningAddress.isNullOrBlank()) {
+                            WalletInfoRow("Lightning address", lightningAddress,
+                                onCopy = { onCopy(lightningAddress) })
+                        }
+                        if (nwcSupportedMethods.isNotEmpty()) {
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                "Supported methods",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            FlowMethodChips(nwcSupportedMethods)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WalletInfoRow(
+    label: String,
+    value: String,
+    onCopy: (() -> Unit)? = null
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            value,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(2f)
+        )
+        if (onCopy != null) {
+            Spacer(Modifier.width(8.dp))
+            IconButton(
+                onClick = onCopy,
+                modifier = Modifier.size(28.dp)
+            ) {
+                Icon(
+                    Icons.Default.ContentCopy,
+                    contentDescription = "Copy",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+        }
+    }
+}
+
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun FlowMethodChips(methods: List<String>) {
+    // Simple wrapping row using Compose's FlowRow.
+    androidx.compose.foundation.layout.FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        methods.forEach { method ->
+            Surface(
+                color = MaterialTheme.colorScheme.surface,
+                shape = RoundedCornerShape(50),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+            ) {
+                Text(
+                    method,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                )
+            }
+        }
+    }
+}
+
+private fun truncateMiddle(value: String, head: Int = 8, tail: Int = 8): String {
+    if (value.length <= head + tail + 1) return value
+    return "${value.take(head)}…${value.takeLast(tail)}"
 }
 
 private fun formatRelativeTime(timestamp: Long): String {
