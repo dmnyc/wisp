@@ -40,10 +40,11 @@ enum class BottomTab(
     val labelResId: Int,
     val selectedIcon: ImageVector?,
     val unselectedIcon: ImageVector?,
-    val iconResId: Int? = null
+    val selectedIconRes: Int? = null,
+    val unselectedIconRes: Int? = null
 ) {
     HOME(Routes.FEED, R.string.nav_home, Icons.Filled.Home, Icons.Outlined.Home),
-    WALLET(Routes.WALLET, R.string.nav_wallet, null, null, R.drawable.ic_wallet),
+    WALLET(Routes.WALLET, R.string.nav_wallet, null, null, R.drawable.ic_wallet, R.drawable.ic_wallet_outlined),
     SEARCH(Routes.SEARCH, R.string.nav_search, Icons.Filled.Search, Icons.Outlined.Search),
     MESSAGES(Routes.DM_LIST, R.string.nav_messages, Icons.Filled.Forum, Icons.Outlined.Forum),
     NOTIFICATIONS(Routes.NOTIFICATIONS, R.string.nav_notifications, Icons.Filled.Notifications, Icons.Outlined.Notifications)
@@ -101,11 +102,12 @@ fun WispBottomBar(
                                 contentDescription = stringResource(tab.labelResId),
                                 tint = zapTint
                             )
-                        } else if (tab.iconResId != null) {
-                            // Wallet (and any other tab using a drawable resource)
-                            // — fixed icon, doesn't switch on selected/zap-icon prefs.
+                        } else if (tab.selectedIconRes != null && tab.unselectedIconRes != null) {
+                            // Drawable-backed tabs (wallet) — solid when selected,
+                            // outlined when not.
+                            val iconRes = if (selected) tab.selectedIconRes else tab.unselectedIconRes
                             Icon(
-                                painter = painterResource(tab.iconResId),
+                                painter = painterResource(iconRes),
                                 contentDescription = stringResource(tab.labelResId),
                                 tint = zapTint
                             )

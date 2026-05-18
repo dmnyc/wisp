@@ -398,7 +398,7 @@ fun WispDrawerContent(
         NavigationDrawerItem(
             icon = {
                 Icon(
-                    painter = painterResource(R.drawable.ic_wallet),
+                    painter = painterResource(R.drawable.ic_wallet_outlined),
                     contentDescription = null,
                     modifier = Modifier.size(24.dp)
                 )
@@ -562,7 +562,7 @@ fun WispDrawerContent(
                             Spacer(Modifier.height(14.dp))
                             Row(verticalAlignment = Alignment.Top) {
                                 Icon(
-                                    painter = painterResource(R.drawable.ic_wallet),
+                                    painter = painterResource(R.drawable.ic_wallet_outlined),
                                     contentDescription = null,
                                     modifier = Modifier.size(20.dp),
                                     tint = MaterialTheme.colorScheme.error
