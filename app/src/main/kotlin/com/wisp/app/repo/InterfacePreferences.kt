@@ -19,37 +19,72 @@ class InterfacePreferences(context: Context) {
 
     private val prefs = context.getSharedPreferences("wisp_settings", Context.MODE_PRIVATE)
 
+    /**
+     * Optional hook fired after any setter that mutates a NIP-78-synced
+     * field. AppSettingsRepository registers itself here so a debounced
+     * cross-device publish kicks off automatically. Non-synced setters
+     * (language, newNotesButtonHidden, liveStreamsHidden, autoTranslate)
+     * don't call this.
+     */
+    @Volatile
+    var onSyncedFieldChanged: (() -> Unit)? = null
+
+    private fun fireSync() { onSyncedFieldChanged?.invoke() }
+
     fun getAccentColor(): Int = prefs.getInt("accent_color", 0xFFFF9800.toInt())
-    fun setAccentColor(colorInt: Int) = prefs.edit().putInt("accent_color", colorInt).apply()
+    fun setAccentColor(colorInt: Int) {
+        prefs.edit().putInt("accent_color", colorInt).apply()
+        fireSync()
+    }
 
     fun isLargeText(): Boolean = prefs.getBoolean("large_text", false)
-    fun setLargeText(enabled: Boolean) = prefs.edit().putBoolean("large_text", enabled).apply()
+    fun setLargeText(enabled: Boolean) {
+        prefs.edit().putBoolean("large_text", enabled).apply()
+        fireSync()
+    }
 
     fun isNewNotesButtonHidden(): Boolean = prefs.getBoolean("new_notes_button_hidden", false)
     fun setNewNotesButtonHidden(hidden: Boolean) = prefs.edit().putBoolean("new_notes_button_hidden", hidden).apply()
 
     fun getTheme(): String = prefs.getString("theme", "custom") ?: "custom"
-    fun setTheme(theme: String) = prefs.edit().putString("theme", theme).apply()
+    fun setTheme(theme: String) {
+        prefs.edit().putString("theme", theme).apply()
+        fireSync()
+    }
 
     fun isClientTagEnabled(): Boolean = prefs.getBoolean("client_tag_enabled", true)
-    fun setClientTagEnabled(enabled: Boolean) = prefs.edit().putBoolean("client_tag_enabled", enabled).apply()
+    fun setClientTagEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("client_tag_enabled", enabled).apply()
+        fireSync()
+    }
 
     fun isAutoLoadMedia(): Boolean = prefs.getBoolean("auto_load_media", true)
-    fun setAutoLoadMedia(enabled: Boolean) = prefs.edit().putBoolean("auto_load_media", enabled).apply()
+    fun setAutoLoadMedia(enabled: Boolean) {
+        prefs.edit().putBoolean("auto_load_media", enabled).apply()
+        fireSync()
+    }
 
     fun isVideoAutoPlay(): Boolean = prefs.getBoolean("video_auto_play", true)
-    fun setVideoAutoPlay(enabled: Boolean) = prefs.edit().putBoolean("video_auto_play", enabled).apply()
+    fun setVideoAutoPlay(enabled: Boolean) {
+        prefs.edit().putBoolean("video_auto_play", enabled).apply()
+        fireSync()
+    }
 
     fun getMediaLayoutStyle(): MediaLayoutStyle =
         MediaLayoutStyle.fromKey(prefs.getString("media_layout_style", null))
-    fun setMediaLayoutStyle(style: MediaLayoutStyle) =
+    fun setMediaLayoutStyle(style: MediaLayoutStyle) {
         prefs.edit().putString("media_layout_style", style.key).apply()
+        fireSync()
+    }
 
     fun getLanguage(): String = prefs.getString("language", "system") ?: "system"
     fun setLanguage(language: String) = prefs.edit().putString("language", language).apply()
 
     fun isZapBoltIcon(): Boolean = prefs.getBoolean("zap_bolt_icon", false)
-    fun setZapBoltIcon(enabled: Boolean) = prefs.edit().putBoolean("zap_bolt_icon", enabled).apply()
+    fun setZapBoltIcon(enabled: Boolean) {
+        prefs.edit().putBoolean("zap_bolt_icon", enabled).apply()
+        fireSync()
+    }
 
     fun isLiveStreamsHidden(): Boolean = prefs.getBoolean("live_streams_hidden", false)
     fun setLiveStreamsHidden(hidden: Boolean) = prefs.edit().putBoolean("live_streams_hidden", hidden).apply()
@@ -58,16 +93,29 @@ class InterfacePreferences(context: Context) {
     fun setAutoTranslate(enabled: Boolean) = prefs.edit().putBoolean("auto_translate", enabled).apply()
 
     fun isPostUndoTimerEnabled(): Boolean = prefs.getBoolean("post_undo_timer_enabled", true)
-    fun setPostUndoTimerEnabled(enabled: Boolean) = prefs.edit().putBoolean("post_undo_timer_enabled", enabled).apply()
+    fun setPostUndoTimerEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("post_undo_timer_enabled", enabled).apply()
+        fireSync()
+    }
 
     fun getPostUndoTimerSeconds(): Int {
         val stored = prefs.getInt("post_undo_timer_seconds", 10)
         return if (stored in postUndoTimerOptions) stored else 10
     }
-    fun setPostUndoTimerSeconds(seconds: Int) = prefs.edit().putInt("post_undo_timer_seconds", seconds).apply()
+    fun setPostUndoTimerSeconds(seconds: Int) {
+        prefs.edit().putInt("post_undo_timer_seconds", seconds).apply()
+        fireSync()
+    }
 
     fun isPostUndoTimerForReplies(): Boolean = prefs.getBoolean("post_undo_timer_for_replies", false)
-    fun setPostUndoTimerForReplies(enabled: Boolean) = prefs.edit().putBoolean("post_undo_timer_for_replies", enabled).apply()
+    fun setPostUndoTimerForReplies(enabled: Boolean) {
+        prefs.edit().putBoolean("post_undo_timer_for_replies", enabled).apply()
+        fireSync()
+    }
+
+    // NIP-78 cross-device sync of UI prefs.
+    fun isSyncSettingsToRelays(): Boolean = prefs.getBoolean("sync_settings_to_relays", true)
+    fun setSyncSettingsToRelays(enabled: Boolean) = prefs.edit().putBoolean("sync_settings_to_relays", enabled).apply()
 
     /** Reset all interface preferences to defaults (called on full logout). */
     fun reset() {
@@ -85,6 +133,7 @@ class InterfacePreferences(context: Context) {
             .remove("post_undo_timer_for_replies")
             .remove("auto_translate")
             .remove("media_layout_style")
+            .remove("sync_settings_to_relays")
             .apply()
     }
 }

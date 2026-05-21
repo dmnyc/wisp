@@ -16,6 +16,7 @@ import com.wisp.app.relay.RelayPool
 import com.wisp.app.relay.RelayScoreBoard
 import com.wisp.app.relay.ScoredRelay
 import com.wisp.app.relay.SubscriptionManager
+import com.wisp.app.repo.AppSettingsRepository
 import com.wisp.app.repo.BlossomRepository
 import com.wisp.app.repo.BookmarkRepository
 import com.wisp.app.repo.BookmarkSetRepository
@@ -146,11 +147,13 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
     fun setSigner(s: NostrSigner) {
         signer = s
         zapSender.signer = s
+        appSettingsRepo.signer = s
         registerAuthSigner()
     }
 
     fun clearSigner() {
         signer = null
+        appSettingsRepo.signer = null
     }
 
     private fun registerAuthSigner() {
@@ -270,6 +273,11 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     val interfacePrefs = InterfacePreferences(app)
+    val appSettingsRepo = AppSettingsRepository(
+        interfacePrefs = interfacePrefs,
+        fiatPrefs = com.wisp.app.repo.FiatPreferences.get(app),
+        zapPrefs = zapPrefs
+    ).also { it.relayPool = relayPool }
     val nwcRepo = NwcRepository(app, relayPool, pubkeyHex)
     val sparkRepo = SparkRepository(app, pubkeyHex)
     val walletModeRepo = WalletModeRepository(app, pubkeyHex)
@@ -329,7 +337,7 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
         registerAuthSigner = { registerAuthSigner() },
         fetchEmojiSets = { listCrud.fetchEmojiSets() },
         getSigner = { signer }
-    )
+    ).also { it.appSettingsRepo = appSettingsRepo }
 
     // -- Global online count from nostrarchives live-metrics --
     private val _globalOnlineCount = MutableStateFlow<Int?>(null)

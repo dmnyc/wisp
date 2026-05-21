@@ -44,6 +44,16 @@ class ZapPreferences(private val context: Context, pubkeyHex: String? = null) {
         }
     }
 
+    /**
+     * Fired after preset mutations so AppSettingsRepository can publish
+     * the new NIP-78 backup. Note: `applyCSV` (the inverse path from a
+     * remote backup) deliberately swallows this callback to avoid an
+     * immediate re-publish loop.
+     */
+    @Volatile
+    var onSyncedFieldChanged: (() -> Unit)? = null
+    private var suppressSyncCallback = false
+
     fun setPresets(presets: List<ZapPreset>) {
         val arr = JSONArray()
         presets.forEach { preset ->
@@ -53,6 +63,7 @@ class ZapPreferences(private val context: Context, pubkeyHex: String? = null) {
             arr.put(obj)
         }
         prefs.edit().putString(KEY_ZAP_PRESETS, arr.toString()).apply()
+        if (!suppressSyncCallback) onSyncedFieldChanged?.invoke()
     }
 
     fun addPreset(preset: ZapPreset): List<ZapPreset> {
@@ -72,5 +83,32 @@ class ZapPreferences(private val context: Context, pubkeyHex: String? = null) {
 
     fun reload(pubkeyHex: String?) {
         prefs = context.getSharedPreferences(prefsName(pubkeyHex), Context.MODE_PRIVATE)
+    }
+
+    /**
+     * Serialize the current preset list as CSV for NIP-78 cross-device sync.
+     * Format: `<sats>` or `<sats>:<message>`, joined by commas. Messages
+     * have commas and colons stripped before save because they're the
+     * format delimiters.
+     */
+    fun toCSV(): String = getPresets().joinToString(",") { preset ->
+        val msg = preset.message.replace(",", "").replace(":", "").trim()
+        if (msg.isEmpty()) preset.amountSats.toString() else "${preset.amountSats}:$msg"
+    }
+
+    /** Parse a CSV string from a NIP-78 backup and replace the current presets. */
+    fun applyCSV(csv: String) {
+        val parsed = csv.split(",")
+            .mapNotNull { entry ->
+                val trimmed = entry.trim()
+                if (trimmed.isEmpty()) return@mapNotNull null
+                val parts = trimmed.split(":", limit = 2)
+                val sats = parts[0].trim().toLongOrNull() ?: return@mapNotNull null
+                ZapPreset(sats, parts.getOrNull(1)?.trim().orEmpty())
+            }
+        if (parsed.isNotEmpty()) {
+            suppressSyncCallback = true
+            try { setPresets(parsed) } finally { suppressSyncCallback = false }
+        }
     }
 }

@@ -92,7 +92,8 @@ fun InterfaceScreen(
     application: Application,
     interfacePrefs: InterfacePreferences,
     onBack: () -> Unit,
-    onChanged: () -> Unit
+    onChanged: () -> Unit,
+    onSyncRequested: (() -> Unit)? = null
 ) {
     var isLargeText by remember { mutableStateOf(interfacePrefs.isLargeText()) }
     var newNotesHidden by remember { mutableStateOf(interfacePrefs.isNewNotesButtonHidden()) }
@@ -657,6 +658,40 @@ fun InterfaceScreen(
                             }
                         )
                     }
+                }
+            }
+
+            Spacer(Modifier.height(24.dp))
+
+            // Cross-device sync section (NIP-78 app-settings backup)
+            var syncSettingsEnabled by remember { mutableStateOf(interfacePrefs.isSyncSettingsToRelays()) }
+            Text(
+                "Cross-device sync",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Sync settings to relays", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "Encrypted backup of your interface preferences (theme, accent, fiat mode, zap presets, etc.). Picked up automatically when you sign in on another device.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
+                    Switch(
+                        checked = syncSettingsEnabled,
+                        onCheckedChange = {
+                            syncSettingsEnabled = it
+                            interfacePrefs.setSyncSettingsToRelays(it)
+                            if (it) onSyncRequested?.invoke()
+                        }
+                    )
                 }
             }
 

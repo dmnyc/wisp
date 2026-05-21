@@ -106,6 +106,9 @@ class StartupCoordinator(
     private val fetchEmojiSets: () -> Unit,
     private val getSigner: () -> NostrSigner?
 ) {
+    /** Optional NIP-78 sync repo — restored from relays once connected, if non-null. */
+    var appSettingsRepo: com.wisp.app.repo.AppSettingsRepository? = null
+
     private var eventProcessingJob: Job? = null
     private var metadataSweepJob: Job? = null
     private var ephemeralCleanupJob: Job? = null
@@ -398,6 +401,9 @@ class StartupCoordinator(
                 relayPool.awaitAnyConnected(minCount = minOf(3, relayCount), timeoutMs = 5_000)
                 subscribeSelfData()
                 awaitEmojiListThenFetchSets()
+                // Restore NIP-78 app-settings backup (non-destructive — missing
+                // remote fields keep local defaults). Best-effort, fire-and-forget.
+                launch { runCatching { appSettingsRepo?.restoreSettingsBackup() } }
 
                 // Show profile if we didn't have it cached but now have it from self-data
                 if (cachedProfile == null) {
@@ -452,6 +458,7 @@ class StartupCoordinator(
                         if (pk != null) subscribeDmsAndNotifications(pk)
                     }
                     awaitEmojiListThenFetchSets()
+                    runCatching { appSettingsRepo?.restoreSettingsBackup() }
                 }
 
                 follows = cachedFollows.map { it.pubkey }

@@ -2698,7 +2698,8 @@ fun WispNavHost(
                 application = app,
                 interfacePrefs = interfacePrefs,
                 onBack = { navController.popBackStack() },
-                onChanged = onInterfaceChanged
+                onChanged = onInterfaceChanged,
+                onSyncRequested = { feedViewModel.appSettingsRepo.scheduleSettingsSync() }
             )
         }
 

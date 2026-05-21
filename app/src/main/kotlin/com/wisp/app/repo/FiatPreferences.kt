@@ -14,12 +14,20 @@ class FiatPreferences(context: Context) {
     private val _currency = MutableStateFlow(prefs.getString(KEY_CURRENCY, "USD") ?: "USD")
     val currency: StateFlow<String> = _currency.asStateFlow()
 
+    /**
+     * Fired after fiatMode / currency mutations so the
+     * AppSettingsRepository can debounce-publish the new NIP-78 backup.
+     */
+    @Volatile
+    var onSyncedFieldChanged: (() -> Unit)? = null
+
     fun isFiatMode(): Boolean = _fiatMode.value
 
     fun setFiatMode(enabled: Boolean) {
         if (_fiatMode.value == enabled) return
         prefs.edit().putBoolean(KEY_FIAT_MODE, enabled).apply()
         _fiatMode.value = enabled
+        onSyncedFieldChanged?.invoke()
     }
 
     fun getCurrency(): String = _currency.value
@@ -28,6 +36,7 @@ class FiatPreferences(context: Context) {
         if (_currency.value == code) return
         prefs.edit().putString(KEY_CURRENCY, code).apply()
         _currency.value = code
+        onSyncedFieldChanged?.invoke()
     }
 
     companion object {

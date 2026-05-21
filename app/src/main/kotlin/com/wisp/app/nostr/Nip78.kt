@@ -128,4 +128,77 @@ object Nip78 {
     /** Extract the d-tag value from an event, or null. */
     fun extractDTag(event: NostrEvent): String? =
         event.tags.firstOrNull { it.size >= 2 && it[0] == "d" }?.get(1)
+
+    // ─── App Settings Backup ──────────────────────────────────────────────────
+
+    const val APP_SETTINGS_D_TAG = "wisp-app-settings:v1"
+
+    /**
+     * Versioned, NIP-44-encrypted UI-prefs payload stored as kind 30078.
+     * Every field is optional so older / newer clients round-trip without
+     * data loss. JSON keys match iOS Nip78Backup.AppSettingsPayload
+     * byte-for-byte so the backups are bit-compatible across platforms.
+     */
+    @kotlinx.serialization.Serializable
+    data class AppSettingsPayload(
+        // Interface prefs
+        val zapIconStyle: String? = null,
+        val largeText: Boolean? = null,
+        val themeName: String? = null,
+        val accentColorARGB: Int? = null,
+        val autoLoadMedia: Boolean? = null,
+        val videoAutoplay: Boolean? = null,
+        val mediaLayoutStyle: String? = null,
+        val clientTagEnabled: Boolean? = null,
+        val postUndoTimerEnabled: Boolean? = null,
+        val postUndoTimerSeconds: Int? = null,
+        val postUndoTimerForReplies: Boolean? = null,
+        // Fiat prefs
+        val fiatModeEnabled: Boolean? = null,
+        val fiatCurrency: String? = null,
+        // Zap prefs
+        val zapPresetsCSV: String? = null,
+        // Quick-zap prefs (task #2 — fields included now so the schema is
+        // forward-compatible with iOS backups that already carry them).
+        val quickZapEnabled: Boolean? = null,
+        val quickZapAmountSats: Long? = null,
+        val quickZapAmountFiat: Double? = null,
+        val quickZapMessage: String? = null,
+        val version: Int? = 1
+    )
+
+    private val lenientJson = kotlinx.serialization.json.Json {
+        ignoreUnknownKeys = true
+        encodeDefaults = false
+    }
+
+    /** Build and sign a kind 30078 event carrying the NIP-44-encrypted settings JSON. */
+    suspend fun createAppSettingsEvent(signer: NostrSigner, payload: AppSettingsPayload): NostrEvent {
+        val json = lenientJson.encodeToString(AppSettingsPayload.serializer(), payload)
+        val encrypted = signer.nip44Encrypt(json, signer.pubkeyHex)
+        val tags = listOf(
+            listOf("d", APP_SETTINGS_D_TAG),
+            listOf("encryption", "nip44")
+        )
+        return signer.signEvent(kind = KIND, content = encrypted, tags = tags)
+    }
+
+    /** Decrypt a kind 30078 app-settings event and parse the JSON payload. Returns null on any failure. */
+    suspend fun decryptAppSettings(signer: NostrSigner, event: NostrEvent): AppSettingsPayload? {
+        if (event.content.isBlank()) return null
+        return try {
+            val decrypted = signer.nip44Decrypt(event.content, event.pubkey)
+            lenientJson.decodeFromString(AppSettingsPayload.serializer(), decrypted)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /** Filter to fetch this user's app-settings backup (single addressable event). */
+    fun appSettingsFilter(pubkeyHex: String): Filter = Filter(
+        kinds = listOf(KIND),
+        authors = listOf(pubkeyHex),
+        dTags = listOf(APP_SETTINGS_D_TAG),
+        limit = 1
+    )
 }
