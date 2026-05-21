@@ -145,7 +145,11 @@ object Nip78 {
         val zapIconStyle: String? = null,
         val largeText: Boolean? = null,
         val themeName: String? = null,
-        val accentColorARGB: Int? = null,
+        // iOS encodes ARGB as Swift `Int` (64-bit), so values like
+        // 0xFFFF9800 (4_294_940_672) overflow Kotlin's signed 32-bit
+        // Int. Use Long here and convert at the setter — the lower 32
+        // bits round-trip correctly even when Int reads them negative.
+        val accentColorARGB: Long? = null,
         val autoLoadMedia: Boolean? = null,
         val videoAutoplay: Boolean? = null,
         val mediaLayoutStyle: String? = null,
@@ -189,7 +193,8 @@ object Nip78 {
         return try {
             val decrypted = signer.nip44Decrypt(event.content, event.pubkey)
             lenientJson.decodeFromString(AppSettingsPayload.serializer(), decrypted)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            android.util.Log.w("AppSettingsSync", "decryptAppSettings exception: ${e.javaClass.simpleName}: ${e.message}", e)
             null
         }
     }

@@ -85,7 +85,9 @@ class AppSettingsRepository(
             zapIconStyle = if (interfacePrefs.isZapBoltIcon()) "bolt" else "default",
             largeText = interfacePrefs.isLargeText(),
             themeName = interfacePrefs.getTheme(),
-            accentColorARGB = interfacePrefs.getAccentColor(),
+            // Local stores ARGB as signed 32-bit Int; convert to unsigned
+            // Long so iOS reads it as a non-negative value.
+            accentColorARGB = interfacePrefs.getAccentColor().toLong() and 0xFFFFFFFFL,
             autoLoadMedia = interfacePrefs.isAutoLoadMedia(),
             videoAutoplay = interfacePrefs.isVideoAutoPlay(),
             mediaLayoutStyle = mediaLayout,
@@ -119,10 +121,13 @@ class AppSettingsRepository(
      * the local default — adding a new field on iOS won't wipe its value
      * on Android (and vice-versa).
      */
-    suspend fun restoreSettingsBackup() {
-        val s = signer ?: return
-        val pool = relayPool ?: return
-        if (!interfacePrefs.isSyncSettingsToRelays()) return
+    suspend fun restoreSettingsBackup() = kotlinx.coroutines.coroutineScope {
+        val s = signer ?: run { Log.d(TAG, "restore skipped: no signer"); return@coroutineScope }
+        val pool = relayPool ?: run { Log.d(TAG, "restore skipped: no relay pool"); return@coroutineScope }
+        if (!interfacePrefs.isSyncSettingsToRelays()) {
+            Log.d(TAG, "restore skipped: sync toggle off")
+            return@coroutineScope
+        }
 
         try {
             pool.ensureWriteRelaysConnected()
@@ -135,12 +140,21 @@ class AppSettingsRepository(
         val events = mutableListOf<NostrEvent>()
         var eoseCount = 0
 
-        val collectJob = scope.launch {
+        // Launch the collectors on the CALLING coroutine's scope (via
+        // coroutineScope above) — not the repo's own SupervisorJob/
+        // Dispatchers.Default scope. That separation breaks the
+        // `yield()` handshake below: with the collectors on a separate
+        // scope, yield() doesn't actually dispatch them before sendToAll
+        // fires the REQ, so the first batch of replies (which arrive
+        // ~3-4s later, well after the collector "should" be live) goes
+        // to a SharedFlow with no subscribers and is dropped on the
+        // floor.
+        val collectJob = launch {
             pool.relayEvents.collect { re: RelayEvent ->
                 if (re.subscriptionId == subId && seen.add(re.event.id)) events.add(re.event)
             }
         }
-        val eoseJob = scope.launch {
+        val eoseJob = launch {
             pool.eoseSignals.collect { id ->
                 if (id == subId) eoseCount++
             }
@@ -148,6 +162,7 @@ class AppSettingsRepository(
         yield()
         val total = pool.getRelayUrls().size
         val minEose = (total * 2 + 2) / 3
+        Log.d(TAG, "restore: REQ $subId to $total relays for d=${Nip78.APP_SETTINGS_D_TAG} author=${pubkey.take(8)}")
         pool.sendToAll(ClientMessage.req(subId, filter))
         withTimeoutOrNull(8_000) {
             while (eoseCount < total) {
@@ -158,13 +173,25 @@ class AppSettingsRepository(
         collectJob.cancel()
         eoseJob.cancel()
         pool.closeOnAllRelays(subId)
+        Log.d(TAG, "restore: EOSE $eoseCount/$total events=${events.size}")
 
         val newest = events
             .filter { Nip78.extractDTag(it) == Nip78.APP_SETTINGS_D_TAG }
-            .maxByOrNull { it.created_at } ?: return
+            .maxByOrNull { it.created_at }
+        if (newest == null) {
+            Log.d(TAG, "restore: no matching d-tag event found")
+            return@coroutineScope
+        }
+        Log.d(TAG, "restore: newest event id=${newest.id.take(8)} created_at=${newest.created_at}")
 
-        val payload = Nip78.decryptAppSettings(s, newest) ?: return
+        val payload = Nip78.decryptAppSettings(s, newest)
+        if (payload == null) {
+            Log.w(TAG, "restore: decrypt FAILED for event id=${newest.id.take(8)}")
+            return@coroutineScope
+        }
+        Log.d(TAG, "restore: decrypted payload — zapPresetsCSV=${payload.zapPresetsCSV?.take(60)} quickZap=${payload.quickZapEnabled}/${payload.quickZapAmountSats}")
         applyPayload(payload)
+        Log.d(TAG, "restore: applied — current presets=${zapPrefs.toCSV().take(80)}")
     }
 
     /**
@@ -187,7 +214,7 @@ class AppSettingsRepository(
             p.zapIconStyle?.let { interfacePrefs.setZapBoltIcon(it == "bolt") }
             p.largeText?.let { interfacePrefs.setLargeText(it) }
             p.themeName?.let { interfacePrefs.setTheme(it) }
-            p.accentColorARGB?.let { interfacePrefs.setAccentColor(it) }
+            p.accentColorARGB?.let { interfacePrefs.setAccentColor(it.toInt()) }
             p.autoLoadMedia?.let { interfacePrefs.setAutoLoadMedia(it) }
             p.videoAutoplay?.let { interfacePrefs.setVideoAutoPlay(it) }
             p.mediaLayoutStyle?.let {
