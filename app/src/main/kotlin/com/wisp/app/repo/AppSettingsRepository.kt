@@ -96,6 +96,10 @@ class AppSettingsRepository(
             fiatModeEnabled = fiatPrefs.isFiatMode(),
             fiatCurrency = fiatPrefs.getCurrency(),
             zapPresetsCSV = zapPrefs.toCSV(),
+            quickZapEnabled = interfacePrefs.isQuickZapEnabled(),
+            quickZapAmountSats = interfacePrefs.getQuickZapAmountSats(),
+            quickZapAmountFiat = interfacePrefs.getQuickZapAmountFiat(),
+            quickZapMessage = interfacePrefs.getQuickZapMessage(),
             version = 1
         )
     }
@@ -196,6 +200,10 @@ class AppSettingsRepository(
             p.fiatModeEnabled?.let { fiatPrefs.setFiatMode(it) }
             p.fiatCurrency?.let { fiatPrefs.setCurrency(it) }
             p.zapPresetsCSV?.let { zapPrefs.applyCSV(it) }
+            p.quickZapEnabled?.let { interfacePrefs.setQuickZapEnabled(it) }
+            p.quickZapAmountSats?.let { interfacePrefs.setQuickZapAmountSats(it) }
+            p.quickZapAmountFiat?.let { interfacePrefs.setQuickZapAmountFiat(it) }
+            p.quickZapMessage?.let { interfacePrefs.setQuickZapMessage(it) }
         } finally {
             interfacePrefs.onSyncedFieldChanged = iface
             fiatPrefs.onSyncedFieldChanged = fiat
