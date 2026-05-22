@@ -40,7 +40,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
@@ -216,6 +218,7 @@ fun ActionBar(
             // also fire when the long-press completes — Compose, like
             // SwiftUI, fires both onClick AND onLongClick on release.
             val longPressFired = remember { androidx.compose.runtime.mutableStateOf(false) }
+            val haptics = LocalHapticFeedback.current
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
@@ -236,6 +239,11 @@ fun ActionBar(
                         onLongClick = if (zapEnabled && onZapLongPress != null) {
                             {
                                 longPressFired.value = true
+                                // Confirms the long-press registered before
+                                // the zap network round-trip kicks off, so
+                                // the user can lift their finger knowing
+                                // the instant zap is on the way.
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                                 onZapLongPress()
                             }
                         } else null
