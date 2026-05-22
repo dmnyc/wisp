@@ -155,6 +155,7 @@ import com.wisp.app.ui.component.NsecPasteGuard
 import com.wisp.app.ui.component.SatsNumpad
 import com.wisp.app.ui.util.AmountFormatter
 import com.wisp.app.viewmodel.AutoCheckState
+import com.wisp.app.viewmodel.NwcRestoreState
 import com.wisp.app.viewmodel.FeeState
 import com.wisp.app.viewmodel.BackupStatus
 import com.wisp.app.viewmodel.DeleteBackupStatus
@@ -268,9 +269,12 @@ fun WalletScreen(
                                 walletState = walletState,
                                 connectionString = viewModel.connectionString.collectAsState().value,
                                 statusLines = viewModel.statusLines.collectAsState().value,
+                                nwcRestoreState = viewModel.nwcRestoreState.collectAsState().value,
                                 onConnectionStringChange = { viewModel.updateConnectionString(it) },
                                 onConnect = { viewModel.connectNwcWallet() },
                                 onDisconnect = { viewModel.disconnectWallet() },
+                                onRestoreFromBackup = { viewModel.restoreFromNwcBackup() },
+                                onDismissRestore = { viewModel.dismissNwcRestore() },
                                 onClose = { viewModel.navigateHome() }
                             )
                             is WalletPage.SparkSetup -> SparkSetupContent(
@@ -600,9 +604,12 @@ private fun WalletConnectionContent(
     walletState: WalletState,
     connectionString: String,
     statusLines: List<String>,
+    nwcRestoreState: NwcRestoreState = NwcRestoreState.Idle,
     onConnectionStringChange: (String) -> Unit,
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
+    onRestoreFromBackup: () -> Unit = {},
+    onDismissRestore: () -> Unit = {},
     onClose: () -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -667,6 +674,51 @@ private fun WalletConnectionContent(
             .fillMaxWidth()
             .padding(horizontal = 16.dp)
     )
+
+    if (nwcRestoreState is NwcRestoreState.Found) {
+        Spacer(Modifier.height(16.dp))
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(enabled = !isConnecting, onClick = onRestoreFromBackup),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer
+            )
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    Icons.Outlined.CloudDownload,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+                Spacer(Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        stringResource(R.string.wallet_nwc_restore_title),
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                    Text(
+                        stringResource(R.string.wallet_nwc_restore_subtitle),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+                IconButton(onClick = onDismissRestore, enabled = !isConnecting) {
+                    Icon(
+                        Icons.Filled.Close,
+                        contentDescription = stringResource(R.string.btn_cancel),
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+            }
+        }
+    }
 
     Spacer(Modifier.height(24.dp))
 
