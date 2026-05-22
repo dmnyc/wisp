@@ -611,57 +611,9 @@ private fun WalletConnectionContent(
 
     Spacer(Modifier.height(24.dp))
 
-    Text(
-        stringResource(R.string.wallet_recommended),
-        style = MaterialTheme.typography.titleMedium,
-        color = MaterialTheme.colorScheme.onSurface
-    )
-    Spacer(Modifier.height(12.dp))
-
-    val wallets = listOf(
-        "rizful.com" to "Rizful",
-        "coinos.io" to "Coinos",
-        "getalby.com" to "Alby",
-        "cashu.me" to "Cashu.me",
-        "minibits.cash" to "Minibits"
-    )
-
-    wallets.forEach { (domain, name) ->
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 4.dp)
-                .clickable {
-                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://$domain"))
-                    context.startActivity(intent)
-                },
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant
-            )
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                AsyncImage(
-                    model = "https://$domain/favicon.ico",
-                    contentDescription = name,
-                    modifier = Modifier.size(24.dp)
-                )
-                Spacer(Modifier.width(12.dp))
-                Text(
-                    name,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-            }
-        }
-    }
-
-    Spacer(Modifier.height(24.dp))
-
+    // Paste / Connect block lives above the Recommended wallets list
+    // so the most-common action (paste an existing connection string)
+    // is reachable without scrolling past the wallet suggestions.
     OutlinedTextField(
         value = connectionString,
         onValueChange = { new -> if (!NsecPasteGuard.blockIfNsec(connectionString, new)) onConnectionStringChange(new) },
@@ -778,6 +730,57 @@ private fun WalletConnectionContent(
             modifier = Modifier.fillMaxWidth()
         ) {
             Text(stringResource(R.string.btn_cancel))
+        }
+    }
+
+    Spacer(Modifier.height(32.dp))
+
+    Text(
+        stringResource(R.string.wallet_recommended),
+        style = MaterialTheme.typography.titleMedium,
+        color = MaterialTheme.colorScheme.onSurface
+    )
+    Spacer(Modifier.height(12.dp))
+
+    val wallets = listOf(
+        "rizful.com" to "Rizful",
+        "coinos.io" to "Coinos",
+        "getalby.com" to "Alby",
+        "cashu.me" to "Cashu.me",
+        "minibits.cash" to "Minibits"
+    )
+
+    wallets.forEach { (domain, name) ->
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp)
+                .clickable {
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://$domain"))
+                    context.startActivity(intent)
+                },
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                AsyncImage(
+                    model = "https://$domain/favicon.ico",
+                    contentDescription = name,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    name,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
         }
     }
 
