@@ -23,7 +23,7 @@ object Themes {
                 paidColor = Color(0xFFFFD54F)
             ),
             light = ThemeColors(
-                primary = Color(0xFFCC7000),
+                primary = Color(0xFFD9730D),
                 secondary = Color(0xFFFFB74D),
                 background = Color(0xFFD8D8D8),
                 surface = Color(0xFFE8E8E8),
