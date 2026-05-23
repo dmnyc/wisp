@@ -131,16 +131,16 @@ class SparkRepository(
      * The same privkey always produces the same mnemonic, so a user's default
      * Spark wallet is recoverable on any device by signing in with their nsec.
      *
-     * Saves the mnemonic and marks it as the default wallet (skips backup nags).
+     * Does NOT auto-acknowledge the seed backup — iOS's equivalent leaves the
+     * ack flag false so the "default wallet is secured by your key" welcome
+     * banner can render, and Android should match. The user can dismiss the
+     * banner by tapping it / acknowledging in the seed-view page.
      */
     fun generateDefaultFromPrivkey(privkey: ByteArray): String {
         val wordlist = requireWordlist()
         val entropy = Keys.deriveSparkEntropy(privkey)
         val mnemonic = entropyToMnemonic(entropy, wordlist)
-        encPrefs.edit()
-            .putString("spark_mnemonic", mnemonic)
-            .putBoolean("seed_backup_acked", true)
-            .apply()
+        saveMnemonic(mnemonic)
         return mnemonic
     }
 
@@ -209,8 +209,19 @@ class SparkRepository(
         return null
     }
 
+    /**
+     * Save a Spark mnemonic. Resets the seed-backup ack flag because
+     * the previous acknowledgement applied to whatever mnemonic was in
+     * place before — a newly-restored / newly-pasted wallet should be
+     * treated as un-acked so the welcome / backup banner renders for
+     * the new seed. Mirrors iOS `SparkWallet.saveMnemonic` which clears
+     * the equivalent `spark_seed_acked_<pubkey>` UserDefaults key.
+     */
     fun saveMnemonic(mnemonic: String) {
-        encPrefs.edit().putString("spark_mnemonic", mnemonic).apply()
+        encPrefs.edit()
+            .putString("spark_mnemonic", mnemonic)
+            .remove("seed_backup_acked")
+            .apply()
     }
 
     fun getMnemonic(): String? = encPrefs.getString("spark_mnemonic", null)

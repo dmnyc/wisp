@@ -301,6 +301,11 @@ class WalletViewModel(
         _lightningAddress.value = null
         _lightningAddressError.value = null
         _lightningAddressLoading.value = false
+        // Reset the seed-backup ack flag — sparkRepo.saveMnemonic clears
+        // the underlying prefs key, but the ViewModel-side StateFlow
+        // would otherwise stay at the prior wallet's acknowledged value
+        // until the next refreshState() call.
+        _seedBackupAcked.value = false
     }
 
     /**
@@ -438,7 +443,11 @@ class WalletViewModel(
         val keypair = keyRepo.getKeypair() ?: return
         sparkRepo.generateDefaultFromPrivkey(keypair.privkey)
         _isDefaultWallet.value = true
-        _seedBackupAcked.value = true
+        // Don't auto-ack the seed backup here — iOS leaves it false so
+        // the "default wallet is secured by your key" welcome banner can
+        // render, and Android should match. The user dismisses it by
+        // tapping through to the seed view.
+        _seedBackupAcked.value = false
         skipAutoCreate = false
         walletModeRepo.setAutoCreateSkipped(false)
         // Show SparkSetup's Connecting state instead of a brief ModeSelection flicker.
@@ -662,7 +671,11 @@ class WalletViewModel(
         Log.d("WalletBackup", "restoreSparkWallet: saving and connecting")
         clearWalletDisplayState()
         sparkRepo.saveMnemonic(trimmed)
-        _isDefaultWallet.value = false
+        // Compute isDefaultWallet from the restored mnemonic rather than
+        // hard-coding false — a user restoring their nsec-derived default
+        // via NIP-78 should still light up the "default wallet" surface
+        // (and skip the non-default backup nag).
+        _isDefaultWallet.value = computeIsDefaultWallet()
         skipAutoCreate = false
         walletModeRepo.setAutoCreateSkipped(false)
         connectSparkWallet()
