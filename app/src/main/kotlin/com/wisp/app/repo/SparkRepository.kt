@@ -139,7 +139,6 @@ class SparkRepository(
         val mnemonic = entropyToMnemonic(entropy, wordlist)
         encPrefs.edit()
             .putString("spark_mnemonic", mnemonic)
-            .putBoolean("spark_is_default", true)
             .putBoolean("seed_backup_acked", true)
             .apply()
         return mnemonic
@@ -220,15 +219,34 @@ class SparkRepository(
         encPrefs.edit()
             .remove("spark_mnemonic")
             .remove("seed_backup_acked")
-            .remove("spark_is_default")
             .apply()
         _balance.value = null
         _isConnected.value = false
     }
 
-    /** True when the current wallet was derived from the user's nsec. */
-    fun isDefaultWallet(): Boolean =
-        encPrefs.getBoolean("spark_is_default", false)
+    /**
+     * True when the currently-saved mnemonic matches the deterministic
+     * derivation `entropyToMnemonic(Keys.deriveSparkEntropy(privkey))` for
+     * this account — i.e. the wallet is recoverable on any device by
+     * signing in with the same key.
+     *
+     * Compares the stored mnemonic against the deterministic derivation
+     * rather than relying on a sticky `spark_is_default` flag — a wallet
+     * restored from a non-default NIP-78 backup correctly reports `false`
+     * here even on a device where the user had previously generated the
+     * default wallet (a stale flag was surfacing the "default wallet"
+     * banner over a non-default restored wallet on iOS; mirror fix here).
+     */
+    fun isDefaultWallet(privkey: ByteArray): Boolean {
+        val current = encPrefs.getString("spark_mnemonic", null) ?: return false
+        val wordlist = BIP39_WORDS
+        if (wordlist.size < 2048) return false
+        val derived = entropyToMnemonic(Keys.deriveSparkEntropy(privkey), wordlist)
+        return normalizeMnemonic(current) == normalizeMnemonic(derived)
+    }
+
+    private fun normalizeMnemonic(mnemonic: String): String =
+        mnemonic.trim().lowercase().replace(Regex("\\s+"), " ")
 
     fun isSeedBackupAcknowledged(): Boolean =
         encPrefs.getBoolean("seed_backup_acked", false)
