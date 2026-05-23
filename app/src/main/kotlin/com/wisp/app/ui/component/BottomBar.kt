@@ -19,8 +19,9 @@ import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.Icon
 import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -81,14 +82,16 @@ fun WispBottomBar(
             // + chrome and reserves the lighter "surface" for elevated
             // controls (pills, cards).
             containerColor = MaterialTheme.colorScheme.background,
-            // Material's default 80dp NavigationBar reserves a tall slot
-            // for labels we never render — clamp to 56dp + the gesture
-            // inset for a chrome height closer to the iOS tab bar.
-            modifier = Modifier.height(
-                56.dp + NavigationBarDefaults.windowInsets
-                    .asPaddingValues().calculateBottomPadding()
-            ),
-            windowInsets = NavigationBarDefaults.windowInsets
+            // Compact the chrome: reserve the gesture inset via
+            // `windowInsetsPadding` (resolved at layout time, so no
+            // first-frame snap) and clamp the content area to 56dp
+            // (was Material's default 80dp). Pass `WindowInsets(0)` to
+            // disable NavigationBar's internal inset handling so we
+            // don't double-pad.
+            modifier = Modifier
+                .windowInsetsPadding(NavigationBarDefaults.windowInsets)
+                .height(56.dp),
+            windowInsets = WindowInsets(0)
         ) {
         visibleTabs.forEach { tab ->
             val selected = currentRoute == tab.route

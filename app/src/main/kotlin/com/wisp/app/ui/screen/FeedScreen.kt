@@ -15,8 +15,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -752,14 +752,15 @@ fun FeedScreen(
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
             topBar = {
                 CenterAlignedTopAppBar(
-                    // Material's default 64dp content + status-bar inset
-                    // pads a chunky gap below the icon row. Clamp to 48dp
-                    // + status-bar inset so the chrome lands closer to
-                    // the iOS navigation bar (~44dp content + safe-area).
-                    modifier = Modifier.height(
-                        48.dp + WindowInsets.statusBars
-                            .asPaddingValues().calculateTopPadding()
-                    ),
+                    // Compact: reserve the status-bar inset via
+                    // `windowInsetsPadding` (layout-time, no first-frame
+                    // snap) and clamp the content area to 48dp (was
+                    // Material's default 64dp). Disable the bar's
+                    // internal inset handling to avoid double-padding.
+                    modifier = Modifier
+                        .windowInsetsPadding(WindowInsets.statusBars)
+                        .height(48.dp),
+                    windowInsets = WindowInsets(0),
                     title = {
                                 Box {
                                     Surface(
