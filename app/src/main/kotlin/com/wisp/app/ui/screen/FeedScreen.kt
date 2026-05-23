@@ -867,7 +867,7 @@ fun FeedScreen(
                                 }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surface
+                        containerColor = MaterialTheme.colorScheme.background
                     ),
                     navigationIcon = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
