@@ -654,20 +654,19 @@ fun ComposeScreen(
                     val pillForeground = MaterialTheme.colorScheme.primary
                     val onSurfaceColor = MaterialTheme.colorScheme.onSurface
 
-                    // Build AnnotatedString with pill spans for tracked mentions
+                    // Build AnnotatedString with pill spans for mentions plus inline highlights
+                    // for #hashtags and http(s) URLs. The helper handles the no-mentions case
+                    // (still need to colour hashtags / URLs even when no pills are tracked).
                     val contentWithSpans = remember(content, mentions) {
-                        if (mentions.isEmpty()) {
-                            content
-                        } else {
-                            val annotated = buildMentionAnnotatedString(
-                                text = content.text,
-                                mentions = mentions,
-                                pillBackground = pillBackground,
-                                pillForeground = pillForeground,
-                                defaultColor = onSurfaceColor
-                            )
-                            content.copy(annotatedString = annotated)
-                        }
+                        val annotated = buildMentionAnnotatedString(
+                            text = content.text,
+                            mentions = mentions,
+                            pillBackground = pillBackground,
+                            pillForeground = pillForeground,
+                            defaultColor = onSurfaceColor,
+                            linkColor = pillForeground
+                        )
+                        content.copy(annotatedString = annotated)
                     }
 
                     val emojiVisualTransformation = remember(resolvedEmojis) {
@@ -858,8 +857,7 @@ fun ComposeScreen(
                     ) {
                         Surface(
                             shape = RoundedCornerShape(8.dp),
-                            tonalElevation = 3.dp,
-                            shadowElevation = 2.dp,
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .heightIn(max = 200.dp)
@@ -1134,9 +1132,9 @@ fun ComposeScreen(
                         previewTopOffsetPx = coords.positionInParent().y.toInt()
                     })
 
-                    // Live preview
+                    // Live preview — always visible while composing (matches iOS).
                     AnimatedVisibility(
-                        visible = !imeVisible && (content.text.isNotBlank() || (pollEnabled && pollOptions.any { it.isNotBlank() })) && eventRepo != null
+                        visible = (content.text.isNotBlank() || (pollEnabled && pollOptions.any { it.isNotBlank() })) && eventRepo != null
                     ) {
                         Surface(
                             shape = RoundedCornerShape(8.dp),
@@ -1154,26 +1152,38 @@ fun ComposeScreen(
                                 val userProfile = userPubkey?.let { profileRepo?.get(it) }
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(bottom = 8.dp)
+                                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
                                 ) {
                                     ProfilePicture(url = userProfile?.picture, size = 32)
                                     Spacer(Modifier.width(8.dp))
-                                    Column {
-                                        Text(
-                                            text = userProfile?.displayString ?: "You",
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            fontWeight = FontWeight.Medium,
-                                            maxLines = 1
-                                        )
+                                    Text(
+                                        text = userProfile?.displayString ?: "You",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Medium,
+                                        maxLines = 1,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    // "Preview" badge on the right, matching iOS layout.
+                                    Surface(
+                                        shape = RoundedCornerShape(50),
+                                        color = MaterialTheme.colorScheme.surfaceContainerHigh
+                                    ) {
                                         Text(
                                             text = "Preview",
                                             style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                                         )
                                     }
                                 }
+                                // Materialise @mentions to nostr:nprofile URIs so RichContent can
+                                // colour them as profile links (otherwise the @DisplayName is just
+                                // plain text and renders in the default color).
+                                val previewContent = remember(content, mentions) {
+                                    viewModel.previewMaterializedContent()
+                                }
                                 RichContent(
-                                    content = content.text,
+                                    content = previewContent,
                                     emojiMap = resolvedEmojis,
                                     eventRepo = eventRepo
                                 )
@@ -1275,6 +1285,10 @@ fun ComposeScreen(
                         }
                     }
                 } else {
+                    // Publish is disabled until the post has at least one character of text
+                    // OR at least one uploaded attachment. Prevents accidental empty posts and
+                    // matches the iOS composer's send-button gating.
+                    val hasContent = content.text.isNotBlank() || uploadedUrls.isNotEmpty()
                     Button(
                         onClick = {
                             viewModel.publish(
@@ -1290,7 +1304,7 @@ fun ComposeScreen(
                                 resolvedEmojis = resolvedEmojis
                             )
                         },
-                        enabled = !publishing && !isMiningBusy,
+                        enabled = !publishing && !isMiningBusy && hasContent,
                         modifier = Modifier.fillMaxWidth().height(44.dp),
                         contentPadding = PaddingValues(0.dp)
                     ) {
@@ -1422,11 +1436,18 @@ private fun MentionCandidateRow(
             }
         }
         if (candidate.isContact) {
-            Text(
-                text = "Following",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary
-            )
+            // Muted "Following" pill — matches iOS (grey, not primary tint).
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = MaterialTheme.colorScheme.surfaceContainerHighest
+            ) {
+                Text(
+                    text = "Following",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                )
+            }
         }
     }
 }

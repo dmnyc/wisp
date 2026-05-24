@@ -1049,6 +1049,12 @@ class ComposeViewModel(app: Application, private val savedStateHandle: SavedStat
         savedStateHandle["draft_mentions"] = _mentions.value.map { "${it.start},${it.end},${it.pubkey}" }.toTypedArray()
     }
 
+    /** Renders the current draft as the string that would actually be published — `@DisplayName`
+     *  tracked ranges are spliced into `nostr:nprofile1…` URIs. Used by the live preview so
+     *  RichContent can parse mentions out of plain text the same way it does for published notes. */
+    fun previewMaterializedContent(): String =
+        materializeMentions(_content.value.text, _mentions.value).first
+
     /** Builds the publish-ready content by splicing tracked mention ranges into nostr:nprofile URIs.
      *  Stale ranges (beyond text length) are skipped defensively. */
     private fun materializeMentions(text: String, mentions: List<Mention>): Pair<String, Set<String>> {

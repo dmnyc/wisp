@@ -138,37 +138,72 @@ class EmojiVisualTransformation(
     }
 }
 
+private val COMPOSE_HASHTAG_REGEX = Regex("(?:^|(?<=\\s))#([a-zA-Z0-9_]+)")
+private val COMPOSE_URL_REGEX = Regex("""https?://\S+""")
+
 /**
- * Builds an [AnnotatedString] from [text] with [SpanStyle] pill backgrounds applied to
- * each tracked [Mention] range. Non-mention text is rendered with [defaultColor].
+ * Builds an [AnnotatedString] from [text] with three kinds of inline highlight:
+ *  - tracked [mentions] render as pills (background + foreground colors)
+ *  - `#hashtag` tokens render in [linkColor]
+ *  - `http(s)://…` URLs render in [linkColor]
+ *
+ * Highlight ranges are merged and applied in left-to-right order. Mentions win when ranges
+ * overlap; URLs win over hashtags when a URL contains a `#` fragment.
  */
 fun buildMentionAnnotatedString(
     text: String,
     mentions: List<Mention>,
     pillBackground: Color,
     pillForeground: Color,
-    defaultColor: Color
+    defaultColor: Color,
+    linkColor: Color = pillForeground
 ): AnnotatedString = buildAnnotatedString {
-    var lastEnd = 0
-    val sorted = mentions
-        .filter { it.start >= 0 && it.end <= text.length && it.start < it.end }
-        .sortedBy { it.start }
-    for (m in sorted) {
-        if (m.start >= lastEnd) {
-            withStyle(SpanStyle(color = defaultColor)) {
-                append(text, lastEnd, m.start)
-            }
-            withStyle(
-                SpanStyle(
-                    background = pillBackground,
-                    color = pillForeground,
-                    fontWeight = FontWeight.Medium
-                )
-            ) {
-                append(text, m.start, m.end)
-            }
-            lastEnd = m.end
+    data class Highlight(val start: Int, val end: Int, val style: SpanStyle)
+
+    val pillStyle = SpanStyle(
+        background = pillBackground,
+        color = pillForeground,
+        fontWeight = FontWeight.Medium
+    )
+    val linkStyle = SpanStyle(color = linkColor)
+
+    val highlights = mutableListOf<Highlight>()
+
+    for (m in mentions) {
+        if (m.start in 0..text.length && m.end in m.start..text.length && m.start < m.end) {
+            highlights += Highlight(m.start, m.end, pillStyle)
         }
+    }
+
+    fun overlapsExisting(start: Int, end: Int) =
+        highlights.any { it.start < end && it.end > start }
+
+    for (match in COMPOSE_URL_REGEX.findAll(text)) {
+        val s = match.range.first
+        val e = match.range.last + 1
+        if (!overlapsExisting(s, e)) highlights += Highlight(s, e, linkStyle)
+    }
+
+    for (match in COMPOSE_HASHTAG_REGEX.findAll(text)) {
+        val s = match.range.first
+        val e = match.range.last + 1
+        if (!overlapsExisting(s, e)) highlights += Highlight(s, e, linkStyle)
+    }
+
+    highlights.sortBy { it.start }
+
+    var lastEnd = 0
+    for (h in highlights) {
+        if (h.start < lastEnd) continue // skip any range we already covered
+        if (h.start > lastEnd) {
+            withStyle(SpanStyle(color = defaultColor)) {
+                append(text, lastEnd, h.start)
+            }
+        }
+        withStyle(h.style) {
+            append(text, h.start, h.end)
+        }
+        lastEnd = h.end
     }
     if (lastEnd < text.length) {
         withStyle(SpanStyle(color = defaultColor)) {
