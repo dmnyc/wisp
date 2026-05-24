@@ -26,6 +26,8 @@ import com.wisp.app.db.EventPersistence
 import com.wisp.app.db.WispObjectBox
 import com.wisp.app.repo.EventRepository
 import com.wisp.app.repo.ExtendedNetworkRepository
+import com.wisp.app.repo.FollowHistoryGuard
+import com.wisp.app.repo.FollowRestoreCandidate
 import com.wisp.app.repo.SocialGraphDb
 import com.wisp.app.repo.Nip05Repository
 import com.wisp.app.repo.KeyRepository
@@ -772,5 +774,160 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
         relayPool.disconnectAll()
         liveMetricsSocket?.close(1000, null)
         notifRepo.shutdown()
+    }
+
+    // -- Follow history guard --
+    // Detects when this account's on-relay kind-3 looks clobbered (a
+    // partial or empty list overwrote the real one) and offers to restore
+    // a larger version still recoverable from relay history. See
+    // [FollowHistoryGuard] and docs/follow-history-guard-parity.md.
+
+    private val _followRestoreOffer = MutableStateFlow<FollowRestoreCandidate?>(null)
+    val followRestoreOffer: StateFlow<FollowRestoreCandidate?> = _followRestoreOffer
+
+    /** Snapshot of the relay-published follow count at the moment a
+     *  candidate was found. Used by the prompt sheet so its "right now"
+     *  copy matches what the guard evaluated against — the ContactRepository
+     *  cache can be stale relative to the on-relay state. */
+    private val _followGuardCurrentCount = MutableStateFlow(0)
+    val followGuardCurrentCount: StateFlow<Int> = _followGuardCurrentCount
+
+    private var followGuardChecked = false
+
+    /** Fires once per account session, gated by [followGuardChecked]. Cheap
+     *  when the current count isn't a substantial drop from the recorded
+     *  high-water; the deep relay sweep only fires when suspicion is real. */
+    fun runFollowGuardOnce() {
+        if (followGuardChecked) return
+        followGuardChecked = true
+
+        val pubkey = pubkeyHex ?: return
+        if (!keyRepo.isOnboardingComplete()) {
+            Log.d("FollowGuard", "skip — onboarding not complete for ${pubkey.take(8)}")
+            return
+        }
+        // Watch-only accounts can't sign a restore republish — no point offering.
+        if (signer == null) {
+            Log.d("FollowGuard", "skip — no signer (watch-only or not yet attached)")
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                val context = getApplication<Application>().applicationContext
+                val highWater = FollowHistoryGuard.recordedHighWater(context, pubkey)
+                Log.d("FollowGuard", "starting for ${pubkey.take(8)} — recorded high-water = $highWater")
+
+                val fetched = fetchCurrentKind3FromIndexers(pubkey)
+                val currentFollows = fetched
+                    .maxByOrNull { it.created_at }
+                    ?.let { FollowHistoryGuard.followedPubkeys(it) }
+                    ?: emptyList()
+                Log.d("FollowGuard", "indexer fetch: ${fetched.size} kind-3 event(s), latest has ${currentFollows.size} follows")
+
+                val candidate = FollowHistoryGuard.evaluateRestore(
+                    context = context,
+                    relayPool = relayPool,
+                    pubkey = pubkey,
+                    currentFollows = currentFollows,
+                    fetched = fetched
+                )
+
+                if (candidate != null) {
+                    Log.d("FollowGuard", "candidate: ${candidate.count} follows from createdAt=${candidate.createdAt} — presenting sheet")
+                    _followGuardCurrentCount.value = currentFollows.size
+                    _followRestoreOffer.value = candidate
+                } else {
+                    // Record the current count as the high-water if it's intact —
+                    // future sessions then have a baseline for the drop heuristic.
+                    FollowHistoryGuard.recordHighWater(context, pubkey, currentFollows.size)
+                    Log.d("FollowGuard", "no candidate — no restore offered")
+                }
+            } catch (e: Exception) {
+                Log.w("FollowGuard", "evaluation failed: ${e.message}")
+            }
+        }
+    }
+
+    /** User accepted the restore: republish the recovered list, persist
+     *  the bookkeeping, dismiss the sheet. */
+    fun acceptFollowRestore(candidate: FollowRestoreCandidate) {
+        val s = signer ?: run {
+            _followRestoreOffer.value = null
+            return
+        }
+        val pubkey = pubkeyHex ?: return
+        viewModelScope.launch {
+            try {
+                contactRepo.restoreFollows(
+                    pubkeys = candidate.pubkeys,
+                    signer = s,
+                    relayPool = relayPool,
+                    clientTagEnabled = interfacePrefs.isClientTagEnabled()
+                )
+                val context = getApplication<Application>().applicationContext
+                FollowHistoryGuard.didRestore(context, pubkey, candidate.count)
+            } catch (e: Exception) {
+                Log.w("FollowGuard", "restore publish failed: ${e.message}")
+            } finally {
+                _followRestoreOffer.value = null
+            }
+        }
+    }
+
+    /** User kept the smaller list: record the decline so we don't re-nag
+     *  about the same candidate, dismiss the sheet. */
+    fun declineFollowRestore(candidate: FollowRestoreCandidate) {
+        val pubkey = pubkeyHex ?: return
+        val context = getApplication<Application>().applicationContext
+        FollowHistoryGuard.didDecline(
+            context = context,
+            pubkey = pubkey,
+            currentCount = _followGuardCurrentCount.value,
+            candidateCount = candidate.count
+        )
+        _followRestoreOffer.value = null
+    }
+
+    /** One-shot indexer fetch for this account's latest kind-3. Mirrors
+     *  iOS [MainView.runFollowGuardOnce]'s indexer query — we deliberately
+     *  go past the ContactRepository cache, which can be stale relative to
+     *  what's currently on relays. */
+    private suspend fun fetchCurrentKind3FromIndexers(pubkey: String): List<NostrEvent> {
+        val subId = "fhg-current-${pubkey.take(8)}-${System.currentTimeMillis()}"
+        val filter = Filter(kinds = listOf(3), authors = listOf(pubkey))
+        val req = ClientMessage.req(subId, filter)
+        val seen = HashSet<String>()
+        val events = ArrayList<NostrEvent>()
+        val done = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val target = RelayConfig.DEFAULT_INDEXER_RELAYS.size
+        val eoseCount = java.util.concurrent.atomic.AtomicInteger(0)
+
+        val collector = viewModelScope.launch {
+            relayPool.relayEvents.collect { ev ->
+                if (ev.subscriptionId != subId) return@collect
+                if (ev.event.kind != 3 || ev.event.pubkey != pubkey) return@collect
+                if (seen.add(ev.event.id)) events.add(ev.event)
+            }
+        }
+        val eoseListener = viewModelScope.launch {
+            relayPool.eoseSignals.collect { id ->
+                if (id == subId && eoseCount.incrementAndGet() >= target) {
+                    done.complete(Unit)
+                }
+            }
+        }
+
+        try {
+            for (url in RelayConfig.DEFAULT_INDEXER_RELAYS) {
+                relayPool.sendToRelayOrEphemeral(url, req)
+            }
+            withTimeoutOrNull(8_000) { done.await() }
+        } finally {
+            collector.cancel()
+            eoseListener.cancel()
+            relayPool.closeOnAllRelays(subId)
+        }
+        return events
     }
 }

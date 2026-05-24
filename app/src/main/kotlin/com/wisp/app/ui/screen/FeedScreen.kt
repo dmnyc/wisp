@@ -85,6 +85,7 @@ import com.wisp.app.nostr.NostrEvent
 import com.wisp.app.R
 import com.wisp.app.ui.component.NoteActions
 import com.wisp.app.ui.component.EmojiLibrarySheet
+import com.wisp.app.ui.component.FollowRestorePromptSheet
 import com.wisp.app.ui.component.pendingEmojiReactCallback
 import com.wisp.app.ui.component.GalleryCard
 import com.wisp.app.ui.component.isGalleryEvent
@@ -373,6 +374,24 @@ fun FeedScreen(
         viewModel.zapError.collect { error ->
             zapErrorMessage = error
         }
+    }
+
+    // Follow history guard — fires once per account session. Keyed on
+    // userPubkey so account switches re-arm; the ViewModel's own gate
+    // prevents recompositions from refiring it within a session.
+    val followRestoreOffer by viewModel.followRestoreOffer.collectAsState()
+    val followGuardCurrentCount by viewModel.followGuardCurrentCount.collectAsState()
+    LaunchedEffect(userPubkey) {
+        if (userPubkey != null) viewModel.runFollowGuardOnce()
+    }
+    followRestoreOffer?.let { candidate ->
+        FollowRestorePromptSheet(
+            candidate = candidate,
+            currentCount = followGuardCurrentCount,
+            onRestore = { viewModel.acceptFollowRestore(candidate) },
+            onKeep = { viewModel.declineFollowRestore(candidate) },
+            onDismiss = { viewModel.declineFollowRestore(candidate) }
+        )
     }
 
 

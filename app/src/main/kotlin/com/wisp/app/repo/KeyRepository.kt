@@ -228,6 +228,18 @@ class KeyRepository(private val context: Context) {
                 .remove("active_pubkey")
         }
         editor.apply()
+
+        // Wipe per-pubkey SharedPreferences files so the account leaves no
+        // residue — relay lists, follow cache, follow-history-guard
+        // bookkeeping, etc. all live under suffixed prefs files keyed on
+        // pubkey. Without this, removing then re-adding the same account
+        // would inherit stale state (and the FollowHistoryGuard's
+        // declined-count would suppress a legitimate restore offer).
+        context.getSharedPreferences("wisp_prefs_$pubkeyHex", Context.MODE_PRIVATE)
+            .edit().clear().apply()
+        context.getSharedPreferences("wisp_contacts_$pubkeyHex", Context.MODE_PRIVATE)
+            .edit().clear().apply()
+
         _accounts.value = accounts
     }
 

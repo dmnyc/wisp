@@ -2,8 +2,12 @@ package com.wisp.app.repo
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.wisp.app.nostr.ClientMessage
 import com.wisp.app.nostr.Nip02
 import com.wisp.app.nostr.NostrEvent
+import com.wisp.app.nostr.NostrSigner
+import com.wisp.app.relay.RelayConfig
+import com.wisp.app.relay.RelayPool
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.Serializable
@@ -38,6 +42,45 @@ class ContactRepository(private val context: Context, pubkeyHex: String? = null)
     fun isFollowing(pubkey: String): Boolean = followSet.contains(pubkey)
 
     fun getFollowList(): List<Nip02.FollowEntry> = _followList.value
+
+    /**
+     * Republish a recovered contact list verbatim and make it the local
+     * source of truth. Unlike the incremental follow/unfollow paths this
+     * preserves the recovered ordering instead of round-tripping through
+     * a set, so a restored list reads the same as the original.
+     *
+     * Used by [FollowHistoryGuard] when the user accepts a restore offer.
+     * Self-pubkey is appended if absent (matches onboarding/finishOnboarding).
+     */
+    suspend fun restoreFollows(
+        pubkeys: List<String>,
+        signer: NostrSigner,
+        relayPool: RelayPool,
+        clientTagEnabled: Boolean
+    ): NostrEvent {
+        val seen = HashSet<String>()
+        val ordered = ArrayList<String>(pubkeys.size + 1)
+        for (pk in pubkeys) {
+            if (pk.isEmpty()) continue
+            if (seen.add(pk)) ordered.add(pk)
+        }
+        val myPubkey = signer.pubkeyHex
+        if (seen.add(myPubkey)) ordered.add(myPubkey)
+
+        val entries = ordered.map { Nip02.FollowEntry(it) }
+        val tags = Nip02.buildFollowTags(entries).toMutableList()
+        if (clientTagEnabled) tags.add(listOf("client", "Wisp"))
+
+        val event = signer.signEvent(kind = 3, content = "", tags = tags)
+        updateFromEvent(event)
+
+        val msg = ClientMessage.event(event)
+        relayPool.sendToWriteRelays(msg)
+        for (url in RelayConfig.DEFAULT_INDEXER_RELAYS) {
+            relayPool.sendToRelayOrEphemeral(url, msg)
+        }
+        return event
+    }
 
     fun clear() {
         _followList.value = emptyList()
