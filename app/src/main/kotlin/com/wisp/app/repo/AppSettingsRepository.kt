@@ -26,9 +26,9 @@ import kotlinx.coroutines.yield
  * remote backup non-destructively (each field has its own guard so
  * missing values stay at the local default).
  *
- * Only fires when [InterfacePreferences.isSyncSettingsToRelays] is
- * true. The toggle defaults to on. The user can disable it from the
- * "Cross-device sync" section of the Interface settings screen.
+ * Sync is always on (matching iOS — no user-facing toggle). Manual
+ * pulls are exposed via the "Restore from relays" button in the
+ * Interface settings screen, which calls [restoreSettingsBackup].
  */
 class AppSettingsRepository(
     private val interfacePrefs: InterfacePreferences,
@@ -65,7 +65,6 @@ class AppSettingsRepository(
      * `scheduleSettingsSync()` in a 4s window actually publishes.
      */
     fun scheduleSettingsSync() {
-        if (!interfacePrefs.isSyncSettingsToRelays()) return
         val s = signer ?: return
         val pool = relayPool ?: return
 
@@ -133,13 +132,9 @@ class AppSettingsRepository(
      * the local default — adding a new field on iOS won't wipe its value
      * on Android (and vice-versa).
      */
-    suspend fun restoreSettingsBackup() = kotlinx.coroutines.coroutineScope {
-        val s = signer ?: run { Log.d(TAG, "restore skipped: no signer"); return@coroutineScope }
-        val pool = relayPool ?: run { Log.d(TAG, "restore skipped: no relay pool"); return@coroutineScope }
-        if (!interfacePrefs.isSyncSettingsToRelays()) {
-            Log.d(TAG, "restore skipped: sync toggle off")
-            return@coroutineScope
-        }
+    suspend fun restoreSettingsBackup(): Boolean = kotlinx.coroutines.coroutineScope {
+        val s = signer ?: run { Log.d(TAG, "restore skipped: no signer"); return@coroutineScope false }
+        val pool = relayPool ?: run { Log.d(TAG, "restore skipped: no relay pool"); return@coroutineScope false }
 
         try {
             pool.ensureWriteRelaysConnected()
@@ -192,18 +187,19 @@ class AppSettingsRepository(
             .maxByOrNull { it.created_at }
         if (newest == null) {
             Log.d(TAG, "restore: no matching d-tag event found")
-            return@coroutineScope
+            return@coroutineScope false
         }
         Log.d(TAG, "restore: newest event id=${newest.id.take(8)} created_at=${newest.created_at}")
 
         val payload = Nip78.decryptAppSettings(s, newest)
         if (payload == null) {
             Log.w(TAG, "restore: decrypt FAILED for event id=${newest.id.take(8)}")
-            return@coroutineScope
+            return@coroutineScope false
         }
         Log.d(TAG, "restore: decrypted payload — zapPresetsCSV=${payload.zapPresetsCSV?.take(60)} quickZap=${payload.quickZapEnabled}/${payload.quickZapAmountSats}")
         applyPayload(payload)
         Log.d(TAG, "restore: applied — current presets=${zapPrefs.toCSV().take(80)}")
+        return@coroutineScope true
     }
 
     /**

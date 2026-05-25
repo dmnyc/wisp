@@ -34,8 +34,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.CurrencyBitcoin
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -52,6 +54,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -87,6 +90,7 @@ import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.collectAsState
+import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date
 
@@ -98,6 +102,7 @@ fun InterfaceScreen(
     onBack: () -> Unit,
     onChanged: () -> Unit,
     onSyncRequested: (() -> Unit)? = null,
+    onRestoreRequested: (suspend () -> Boolean)? = null,
     onOpenDeveloperTools: (() -> Unit)? = null
 ) {
     var isLargeText by remember { mutableStateOf(interfacePrefs.isLargeText()) }
@@ -668,40 +673,6 @@ fun InterfaceScreen(
 
             Spacer(Modifier.height(24.dp))
 
-            // Cross-device sync section (NIP-78 app-settings backup)
-            var syncSettingsEnabled by remember { mutableStateOf(interfacePrefs.isSyncSettingsToRelays()) }
-            Text(
-                "Cross-device sync",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Spacer(Modifier.height(8.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Sync settings to relays", style = MaterialTheme.typography.bodyMedium)
-                    Text(
-                        "Encrypted backup of your interface preferences (theme, accent, fiat mode, zap presets, etc.). Picked up automatically when you sign in on another device.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
-                    Switch(
-                        checked = syncSettingsEnabled,
-                        onCheckedChange = {
-                            syncSettingsEnabled = it
-                            interfacePrefs.setSyncSettingsToRelays(it)
-                            if (it) onSyncRequested?.invoke()
-                        }
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(24.dp))
-
             // Fiat Mode section
             val fiatPrefs = remember { FiatPreferences.get(application) }
             val fiatModeEnabled by fiatPrefs.fiatMode.collectAsState()
@@ -931,6 +902,64 @@ fun InterfaceScreen(
                     )
                 }
             }
+            }
+
+            Spacer(Modifier.height(32.dp))
+
+            // Cross-device sync section (NIP-78 app-settings backup). Matches iOS:
+            // sync is always on (no toggle); the manual "Restore from relays" button
+            // lets the user force-pull the latest snapshot on demand. Positioned just
+            // above the Developer section so it stays at the bottom of the screen.
+            Text(
+                "Cross-device sync",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Your appearance, media, posting, and currency preferences sync to relays as an encrypted NIP-78 snapshot so the same setup follows your account on a new device.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (onRestoreRequested != null) {
+                var restoreBusy by remember { mutableStateOf(false) }
+                var restoreLabel by remember { mutableStateOf<String?>(null) }
+                val restoreScope = rememberCoroutineScope()
+                Spacer(Modifier.height(12.dp))
+                Button(
+                    onClick = {
+                        if (restoreBusy) return@Button
+                        restoreBusy = true
+                        restoreLabel = "Fetching latest snapshot…"
+                        restoreScope.launch {
+                            val ok = onRestoreRequested.invoke()
+                            restoreLabel = if (ok) "Settings restored from relays" else "Nothing to restore yet"
+                            restoreBusy = false
+                        }
+                    },
+                    enabled = !restoreBusy,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (restoreBusy) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("Restoring…")
+                    } else {
+                        Text("Restore from relays")
+                    }
+                }
+                if (restoreLabel != null) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        restoreLabel!!,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
 
             Spacer(Modifier.height(32.dp))
