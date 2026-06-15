@@ -7,11 +7,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
@@ -22,6 +26,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.wisp.app.R
 import com.wisp.app.repo.ExtendedNetworkCache
@@ -40,6 +45,8 @@ fun SafetyFiltersTab(
     val spamEnabled by safetyPrefs.spamFilterEnabled.collectAsState()
     val wotEnabled by safetyPrefs.wotFilterEnabled.collectAsState()
     val network by cachedNetwork.collectAsState()
+    val hellthreadEnabled by safetyPrefs.hellthreadFilterEnabled.collectAsState()
+    val hellthreadThreshold by safetyPrefs.hellthreadThreshold.collectAsState()
 
     Column(
         modifier = Modifier
@@ -71,6 +78,74 @@ fun SafetyFiltersTab(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp)
         )
+
+        Spacer(Modifier.height(8.dp))
+        HorizontalDivider()
+        Spacer(Modifier.height(16.dp))
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.safety_hellthread_filter_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+            Switch(
+                checked = hellthreadEnabled,
+                onCheckedChange = { safetyPrefs.setHellthreadFilterEnabled(it) },
+                colors = wispSwitchColors()
+            )
+        }
+        Text(
+            text = stringResource(R.string.safety_hellthread_filter_description),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp)
+        )
+        if (hellthreadEnabled) {
+            Spacer(Modifier.height(8.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = stringResource(R.string.safety_hellthread_threshold_label),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(Modifier.weight(1f))
+                IconButton(
+                    onClick = { safetyPrefs.setHellthreadThreshold(hellthreadThreshold - SafetyPreferences.HELLTHREAD_THRESHOLD_STEP) },
+                    enabled = hellthreadThreshold > SafetyPreferences.HELLTHREAD_THRESHOLD_MIN
+                ) {
+                    Icon(
+                        Icons.Default.ArrowDropDown,
+                        contentDescription = "Decrease threshold",
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+                Text(
+                    text = stringResource(R.string.safety_hellthread_threshold_value, hellthreadThreshold),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                IconButton(
+                    onClick = { safetyPrefs.setHellthreadThreshold(hellthreadThreshold + SafetyPreferences.HELLTHREAD_THRESHOLD_STEP) },
+                    enabled = hellthreadThreshold < SafetyPreferences.HELLTHREAD_THRESHOLD_MAX
+                ) {
+                    Icon(
+                        Icons.Default.Add,
+                        contentDescription = "Increase threshold",
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+            }
+        }
 
         Spacer(Modifier.height(8.dp))
         HorizontalDivider()

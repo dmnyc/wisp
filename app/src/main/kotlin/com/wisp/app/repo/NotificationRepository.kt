@@ -252,6 +252,16 @@ class NotificationRepository(
             val threadRoot = resolveThreadRoot(event)
             if (threadRoot != null && muteRepo?.isThreadMuted(threadRoot) == true) return
 
+            if (safetyPrefs?.hellthreadFilterEnabled?.value == true) {
+                val threshold = safetyPrefs?.hellthreadThreshold?.value ?: NostrEvent.HELLTHREAD_THRESHOLD_DEFAULT
+                if (event.kind == 1 && event.isHellthread(threshold)) return
+                if (event.kind == 6 || event.kind == 7 || event.kind == 9735) {
+                    val refId = event.tags.lastOrNull { it.size >= 2 && it[0] == "e" }?.get(1)
+                    val refEvent = refId?.let { eventRepo?.getEvent(it) }
+                    if (refEvent != null && refEvent.isHellthread(threshold)) return
+                }
+            }
+
             val merged = when (event.kind) {
                 6 -> mergeRepost(event)
                 7 -> mergeReaction(event)

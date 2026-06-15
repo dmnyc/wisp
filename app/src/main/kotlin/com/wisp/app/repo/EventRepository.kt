@@ -340,6 +340,10 @@ class EventRepository(val profileRepo: ProfileRepository? = null, val muteRepo: 
         }
         if (deletedEventsRepo?.isDeleted(event.id) == true) return
         if (isWotFiltered(event.pubkey, event.kind)) return
+        if (event.kind == 1 && safetyPrefs?.hellthreadFilterEnabled?.value == true) {
+            val threshold = safetyPrefs?.hellthreadThreshold?.value ?: NostrEvent.HELLTHREAD_THRESHOLD_DEFAULT
+            if (event.isHellthread(threshold)) return
+        }
         // Track liveness: only count followed authors with recent active-content kinds,
         // so historical fetches, profile metadata, and strangers don't inflate the online count.
         if (event.kind == 1 || event.kind == 6 || event.kind == 7 || event.kind == 30023 || event.kind == 20 || event.kind == 21 || event.kind == 22) {

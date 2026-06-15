@@ -572,6 +572,10 @@
     <string name="safety_wot_compute_now">Compute now</string>
     <string name="safety_wot_recompute">Recompute</string>
     <string name="safety_wot_inactive">Filter is inactive until graph is computed</string>
+    <string name="safety_hellthread_filter_title">Hellthread filter</string>
+    <string name="safety_hellthread_filter_description">Hides notes and notifications that tag more than the threshold number of distinct accounts.</string>
+    <string name="safety_hellthread_threshold_label">Threshold</string>
+    <string name="safety_hellthread_threshold_value">%d mentions</string>
     <string name="thread_no_replies">No replies yet</string>
     <string name="thread_hidden_spam">%d hidden replies from likely spam accounts</string>
     <string name="thread_tap_to_show">Show</string>

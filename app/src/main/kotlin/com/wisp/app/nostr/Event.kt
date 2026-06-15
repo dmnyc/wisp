@@ -30,6 +30,8 @@ data class NostrEvent(
         private val json = Json { ignoreUnknownKeys = true }
         private val sha256Local = ThreadLocal.withInitial { MessageDigest.getInstance("SHA-256") }
 
+        const val HELLTHREAD_THRESHOLD_DEFAULT = 25
+
         fun create(
             privkey: ByteArray,
             pubkey: ByteArray,
@@ -126,6 +128,11 @@ data class NostrEvent(
                 sig = (array.jsonArray[6] as JsonPrimitive).content
             )
         }
+    }
+
+    fun isHellthread(threshold: Int = HELLTHREAD_THRESHOLD_DEFAULT): Boolean {
+        val distinctPubkeys = tags.filter { it.size >= 2 && it[0] == "p" }.map { it[1] }.toHashSet()
+        return distinctPubkeys.size >= threshold
     }
 
     fun toJson(): String = json.encodeToString(serializer(), this)
