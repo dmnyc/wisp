@@ -41,6 +41,11 @@ class MainActivity : FragmentActivity() {
         NsecPasteGuard.setActivity(this)
         enableEdgeToEdge()
         deepLinkUri.value = intent?.data?.toString()
+        // A non-null savedInstanceState means the activity is being recreated after
+        // process death (rotation is excluded via android:configChanges). On this warm
+        // restore Android has already restored the back stack, compose draft, and feed
+        // scroll, so we must NOT bounce the user back to the LOADING screen.
+        val isRestoredFromDeath = savedInstanceState != null
         setContent {
             val prefs = remember { getSharedPreferences("wisp_settings", Context.MODE_PRIVATE) }
             val interfacePrefs = remember { InterfacePreferences(this@MainActivity) }
@@ -83,6 +88,7 @@ class MainActivity : FragmentActivity() {
                     WispNavHost(
                         deepLinkUri = deepLinkUri.value,
                         onDeepLinkConsumed = { deepLinkUri.value = null },
+                        isRestoredFromDeath = isRestoredFromDeath,
                         isDarkTheme = isDarkTheme,
                         onToggleTheme = {
                             isDarkTheme = !isDarkTheme

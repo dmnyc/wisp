@@ -196,7 +196,8 @@ fun WispNavHost(
     onToggleTheme: () -> Unit = {},
     accentColor: androidx.compose.ui.graphics.Color = androidx.compose.ui.graphics.Color(0xFFFF9800),
     isLargeText: Boolean = false,
-    onInterfaceChanged: () -> Unit = {}
+    onInterfaceChanged: () -> Unit = {},
+    isRestoredFromDeath: Boolean = false
 ) {
     val navController = rememberNavController()
     val authViewModel: AuthViewModel = viewModel()
@@ -398,15 +399,33 @@ fun WispNavHost(
         derivedStateOf { currentRoute != null && currentRoute !in hideBottomBarRoutes && !socialGraphComputing }
     }
 
-    // After process death, Navigation restores the last screen but the ViewModel
-    // is fresh (no relay connections, empty feed). Redirect to LOADING to re-fetch.
+    // On a true cold start, Navigation may restore a stale in-app route while the
+    // ViewModel is fresh (no relays, empty feed) — bounce to LOADING to re-fetch.
+    // But on a WARM restore after process death (isRestoredFromDeath), the back stack,
+    // compose draft, and feed scroll are already restored, and initRelays() reconnects
+    // relays + re-seeds the feed from ObjectBox in the background — so we must NOT
+    // navigate away from the restored screen. relaysInitialized is the belt-and-suspenders
+    // guard: if relays already came up this process there is no reason to bounce.
     val loadingComplete by feedViewModel.loadingScreenComplete.collectAsState()
-    if (currentRoute != null && currentRoute !in nonAppRoutes && !loadingComplete) {
+    if (!isRestoredFromDeath &&
+        currentRoute != null && currentRoute !in nonAppRoutes &&
+        !loadingComplete && !feedViewModel.relaysInitialized) {
         LaunchedEffect(Unit) {
             feedViewModel.initRelays()
             navController.navigate(Routes.LOADING) {
                 popUpTo(0) { inclusive = true }
             }
+        }
+    }
+
+    // Warm restore after process death: reconnect relays and re-seed the feed from
+    // ObjectBox silently, without any navigation, so the user stays exactly where they
+    // were (mid-compose, scrolled feed, thread). initRelays() is idempotent.
+    LaunchedEffect(Unit) {
+        if (isRestoredFromDeath && authViewModel.isLoggedIn &&
+            authViewModel.keyRepo.isOnboardingComplete()) {
+            feedViewModel.initRelays()
+            feedViewModel.markLoadingComplete()
         }
     }
 
