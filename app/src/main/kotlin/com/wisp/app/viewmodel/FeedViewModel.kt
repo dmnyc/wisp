@@ -428,6 +428,8 @@ class FeedViewModel(app: Application) : AndroidViewModel(app) {
     fun markLoadingComplete() = feedSub.markLoadingComplete()
 
     // -- Startup delegates --
+    /** True once relays have been initialized this process (survives only in-memory). */
+    val relaysInitialized: Boolean get() = startup.relaysInitialized
     fun initRelays() = startup.initRelays()
     fun resetForAccountSwitch() {
         startup.resetForAccountSwitch()
