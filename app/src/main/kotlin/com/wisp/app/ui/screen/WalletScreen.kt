@@ -309,6 +309,21 @@ fun WalletScreen(
                             )
                         }
                     }
+                    is WalletPage.NwcExport -> {
+                        val page = currentPage as WalletPage.NwcExport
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(padding)
+                                .padding(horizontal = 16.dp)
+                                .verticalScroll(rememberScrollState())
+                        ) {
+                            NwcExportContent(
+                                connectionString = page.connectionString,
+                                onDone = { viewModel.navigateBack() }
+                            )
+                        }
+                    }
                     is WalletPage.Home -> {
                         // Preload recent transactions for the inline footer.
                         LaunchedEffect(walletState) {
@@ -473,6 +488,7 @@ fun WalletScreen(
                             viewModel.resetBackupStatus()
                             viewModel.navigateTo(WalletPage.BackupToRelay)
                         },
+                        onExportConnectionString = { viewModel.showNwcExport() },
                         onDeleteWallet = { viewModel.navigateTo(WalletPage.DeleteWalletConfirm) },
                         relayBackupStatuses = viewModel.relayBackupStatuses.collectAsState().value,
                         relayBackupCheckLoading = viewModel.relayBackupCheckLoading.collectAsState().value,
@@ -2809,6 +2825,109 @@ private fun SparkBackupContent(
     Spacer(Modifier.height(32.dp))
 }
 
+// --- NWC connection string export ---
+
+@Composable
+private fun NwcExportContent(
+    connectionString: String,
+    onDone: () -> Unit
+) {
+    val clipboardManager = LocalClipboardManager.current
+    var copied by remember { mutableStateOf(false) }
+    var revealed by remember { mutableStateOf(false) }
+
+    Spacer(Modifier.height(16.dp))
+
+    Text(
+        "Connection String",
+        style = MaterialTheme.typography.headlineSmall,
+        color = MaterialTheme.colorScheme.onSurface
+    )
+    Spacer(Modifier.height(8.dp))
+    Text(
+        "Anyone with this string can control your wallet. Only share it with wallet apps you trust, and treat it like a password.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.error
+    )
+
+    Spacer(Modifier.height(24.dp))
+
+    if (revealed) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+        ) {
+            Text(
+                connectionString,
+                style = MaterialTheme.typography.bodyMedium,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.padding(16.dp)
+            )
+        }
+    } else {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { revealed = true },
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Icon(
+                    Icons.Outlined.Visibility,
+                    contentDescription = "Reveal connection string",
+                    modifier = Modifier.size(32.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Tap to reveal",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+
+    Spacer(Modifier.height(12.dp))
+
+    OutlinedButton(
+        onClick = {
+            clipboardManager.setText(AnnotatedString(connectionString))
+            copied = true
+        },
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Icon(
+            if (copied) Icons.Default.Check else Icons.Default.ContentCopy,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp)
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(if (copied) "Copied!" else "Copy to Clipboard")
+    }
+
+    Spacer(Modifier.height(24.dp))
+
+    Button(
+        onClick = onDone,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text("Done")
+    }
+
+    Spacer(Modifier.height(32.dp))
+}
+
 // --- Wallet Settings ---
 
 @Composable
@@ -2823,6 +2942,7 @@ private fun WalletSettingsContent(
     onDeleteAddress: () -> Unit = {},
     onBackupMnemonic: () -> Unit,
     onBackupToRelay: () -> Unit = {},
+    onExportConnectionString: () -> Unit = {},
     onDeleteWallet: () -> Unit,
     relayBackupStatuses: List<RelayBackupInfo> = emptyList(),
     relayBackupCheckLoading: Boolean = false,
@@ -3202,6 +3322,13 @@ private fun WalletSettingsContent(
                         )
                     }
                 }
+            }
+        } else if (walletMode == WalletMode.NWC) {
+            OutlinedButton(
+                onClick = onExportConnectionString,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Export Connection String")
             }
         }
 
