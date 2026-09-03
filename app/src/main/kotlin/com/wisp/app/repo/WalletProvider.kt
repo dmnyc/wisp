@@ -65,8 +65,59 @@ data class WalletTransaction(
     /** Pubkey of the counterparty (recipient for outgoing, sender for incoming zaps). */
     val counterpartyPubkey: String? = null,
     val status: TransactionStatus = TransactionStatus.COMPLETED,
-    val isOnchain: Boolean = false
+    val isOnchain: Boolean = false,
+    /**
+     * Ticker of the asset this row moved, when it wasn't bitcoin - e.g. "USDB".
+     * Null for every sats payment, which is the overwhelming majority.
+     *
+     * Spark wallets can hold tokens alongside sats, and Payment.amount is
+     * documented as "satoshis OR token base units". This app offers no token
+     * conversion, but a wallet restored from the same seed in an app that does
+     * hands us those payments anyway, and reading their base units as sats
+     * turns a 15.77 USDB transfer into "15,766,673 sats".
+     *
+     * When this is set, amountMsats / feeMsats are zero: there is no honest
+     * sats value for a token transfer, so nothing sats-denominated - including
+     * fiat conversion - may be derived from this row.
+     */
+    val assetTicker: String? = null,
+    /**
+     * Amount already scaled by the token's decimals, at full precision. Kept as
+     * a String because token base units are u128 and overflow Long.
+     */
+    val assetAmount: String? = null,
+    /** Fee in the same asset, scaled the same way. Null when the fee is zero. */
+    val assetFee: String? = null,
+    /**
+     * Ticker of the asset this payment was converted FROM, when it was one leg
+     * of a conversion - "BTC" for sats into a stablecoin, "USDB" for the way
+     * back. Null for an ordinary payment.
+     *
+     * A conversion is not income or a spend: nothing entered or left the
+     * wallet, it changed shape inside it. Labeling one "Received" - which is
+     * what the bare row did - reads as money arriving from someone.
+     */
+    val conversionFromAsset: String? = null
 ) {
+    /** True when this row moved something other than bitcoin. */
+    val isTokenTransfer: Boolean get() = assetTicker != null
+
+    val isConversion: Boolean get() = conversionFromAsset != null
+
+    /**
+     * Row label for a conversion. Bitcoin reads lowercase - in this sentence
+     * it's the asset, not a ticker symbol.
+     */
+    val conversionLabel: String? get() = conversionFromAsset?.let { from ->
+        val name = when (from.uppercase()) {
+            "BTC", "SATS", "SAT" -> "bitcoin"
+            else -> from
+        }
+        "Converted from $name"
+    }
+
+    /** Row-sized amount: two decimal places, full precision kept in [assetAmount]. */
+    val assetAmountCompact: String? get() = assetAmount?.let { TokenAmounts.compact(it) }
     /** In-flight — unconfirmed and unsettled. */
     val pending: Boolean get() = status == TransactionStatus.PENDING
 
