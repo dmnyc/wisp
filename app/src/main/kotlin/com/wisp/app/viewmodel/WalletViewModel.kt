@@ -17,6 +17,10 @@ import com.wisp.app.repo.EventRepository
 import com.wisp.app.repo.KeyRepository
 import com.wisp.app.repo.BalanceUnit
 import com.wisp.app.repo.NwcRepository
+import com.wisp.app.repo.OnchainDeposit
+import com.wisp.app.repo.OnchainDepositSummary
+import com.wisp.app.repo.OnchainSendQuote
+import com.wisp.app.repo.OnchainSendSpeed
 import com.wisp.app.repo.SparkRepository
 import com.wisp.app.repo.WalletMode
 import com.wisp.app.repo.WalletModeRepository
@@ -114,6 +118,12 @@ sealed class WalletPage {
     ) : WalletPage()
     data class Sending(val invoice: String) : WalletPage()
     data class SendResult(val success: Boolean, val message: String) : WalletPage()
+    /** Amount entry for a send to a Bitcoin address. */
+    data class SendOnchainAmount(val address: String) : WalletPage()
+    /** Fee quote and confirmation for a send to a Bitcoin address. */
+    data class SendOnchainConfirm(val address: String) : WalletPage()
+    /** Deposit address and any deposits still waiting to be claimed. */
+    object ReceiveOnchain : WalletPage()
     object ReceiveAmount : WalletPage()
     data class ReceiveInvoice(val invoice: String, val amountSats: Long) : WalletPage()
     data class ReceiveSuccess(val amountSats: Long) : WalletPage()
@@ -180,6 +190,35 @@ class WalletViewModel(
     val sendError: StateFlow<String?> = _sendError
 
     // Receive flow
+    // --- On-chain ---
+
+    private val _onchainAddress = MutableStateFlow<String?>(null)
+    val onchainAddress: StateFlow<String?> = _onchainAddress
+
+    /**
+     * Deposits waiting to be claimed. Watched from here rather than from the
+     * receive screen: a deposit arrives with no user action and takes three
+     * confirmations to mature, so nothing on screen prompts a refresh at the
+     * moment one lands. Tracking it in a screen would mean "my money arrived"
+     * is only visible to someone already sitting on the right tab.
+     */
+    private val _onchainDeposits = MutableStateFlow(OnchainDepositSummary())
+    val onchainDeposits: StateFlow<OnchainDepositSummary> = _onchainDeposits
+
+    private val _onchainSpeed = MutableStateFlow(OnchainSendSpeed.MEDIUM)
+    val onchainSpeed: StateFlow<OnchainSendSpeed> = _onchainSpeed
+
+    private val _onchainQuote = MutableStateFlow<OnchainSendQuote?>(null)
+    val onchainQuote: StateFlow<OnchainSendQuote?> = _onchainQuote
+
+    private val _onchainSendMax = MutableStateFlow(false)
+    val onchainSendMax: StateFlow<Boolean> = _onchainSendMax
+
+    private val _isQuoting = MutableStateFlow(false)
+    val isQuoting: StateFlow<Boolean> = _isQuoting
+
+    private var depositWatchJob: Job? = null
+
     private val _receiveAmount = MutableStateFlow("")
     val receiveAmount: StateFlow<String> = _receiveAmount
 
@@ -877,6 +916,8 @@ class WalletViewModel(
                     result.fold(
                         onSuccess = { balanceMsats ->
                             _walletState.value = WalletState.Connected(balanceMsats)
+                    startDepositWatch()
+                            startDepositWatch()
                         },
                         onFailure = { e ->
                             _walletState.value = WalletState.Error(e.message ?: "Failed to fetch balance")
@@ -1218,6 +1259,135 @@ class WalletViewModel(
         }
     }
 
+    // --- On-chain actions ---
+
+    /** Fetch the deposit address, or rotate to a fresh one. */
+    fun loadOnchainAddress(newAddress: Boolean = false) {
+        if (walletMode.value != WalletMode.SPARK) return
+        viewModelScope.launch {
+            sparkRepo.receiveOnchainAddress(newAddress)
+                .onSuccess { _onchainAddress.value = it }
+                .onFailure { _sendError.value = it.message }
+        }
+    }
+
+    /**
+     * Poll for pending deposits while a Spark wallet is connected. Started on
+     * connect rather than when a screen opens, so a deposit landing while the
+     * user is anywhere in the app still surfaces on the wallet home.
+     */
+    fun startDepositWatch() {
+        if (walletMode.value != WalletMode.SPARK) return
+        if (depositWatchJob?.isActive == true) return
+        depositWatchJob = viewModelScope.launch {
+            while (true) {
+                _onchainDeposits.value = sparkRepo.listOnchainDeposits()
+                delay(30_000)
+            }
+        }
+    }
+
+    fun stopDepositWatch() {
+        depositWatchJob?.cancel()
+        depositWatchJob = null
+        _onchainDeposits.value = OnchainDepositSummary()
+    }
+
+    fun refreshOnchainDeposits() {
+        if (walletMode.value != WalletMode.SPARK) return
+        viewModelScope.launch { _onchainDeposits.value = sparkRepo.listOnchainDeposits() }
+    }
+
+    /**
+     * Claim a deposit the automatic claimer couldn't settle. [feeSats] null
+     * retries at the automatic cap; a value claims at exactly that cap after
+     * the user confirmed the cost.
+     */
+    fun claimOnchainDeposit(deposit: OnchainDeposit, feeSats: Long?) {
+        viewModelScope.launch {
+            sparkRepo.claimOnchainDeposit(deposit.txid, deposit.vout, feeSats)
+                .onFailure { _sendError.value = it.message }
+            _onchainDeposits.value = sparkRepo.listOnchainDeposits()
+        }
+    }
+
+    fun setOnchainSpeed(speed: OnchainSendSpeed) {
+        if (_onchainSpeed.value == speed) return
+        _onchainSpeed.value = speed
+        // The fee is tier-specific, so a quote for the old tier would misstate
+        // what this send costs.
+        _onchainQuote.value = null
+    }
+
+    fun setOnchainSendMax(enabled: Boolean) {
+        _onchainSendMax.value = enabled
+        // Draining and sending an amount quote against opposite fee policies,
+        // so the held quote can't survive the switch.
+        _onchainQuote.value = null
+        if (enabled) _sendAmount.value = ""
+    }
+
+    fun clearOnchainQuote() {
+        _onchainQuote.value = null
+    }
+
+    /** Quote an on-chain send. Nothing is sent until the fee has been shown. */
+    fun quoteOnchainSend(address: String, amountSats: Long) {
+        _isQuoting.value = true
+        _sendError.value = null
+        viewModelScope.launch {
+            sparkRepo.prepareSendOnchain(
+                address = address,
+                amountSats = amountSats,
+                speed = _onchainSpeed.value,
+                drainAll = _onchainSendMax.value,
+            )
+                .onSuccess { _onchainQuote.value = it }
+                .onFailure { _sendError.value = it.message }
+            _isQuoting.value = false
+        }
+    }
+
+    /** Send the quote the user confirmed. */
+    fun sendOnchain() {
+        val quote = _onchainQuote.value ?: return
+        _isLoading.value = true
+        viewModelScope.launch {
+            sparkRepo.executeSendOnchain(quote)
+                .onSuccess {
+                    _onchainQuote.value = null
+                    _onchainSendMax.value = false
+                    navigateTo(WalletPage.SendResult(true, "Sent on-chain"))
+                    refreshBalance()
+                    loadTransactions()
+                }
+                .onFailure {
+                    // The held quote is spent or stale either way; make the
+                    // user re-quote rather than retry against a moved number.
+                    _onchainQuote.value = null
+                    navigateTo(WalletPage.SendResult(false, it.message ?: "The send failed"))
+                }
+            _isLoading.value = false
+        }
+    }
+
+    /**
+     * Whether a string is a Bitcoin address this wallet can pay. Deliberately
+     * prefix-based rather than a full validity check: the SDK rejects a bad
+     * address when quoting, and guessing at bech32 or base58 rules here would
+     * only add a second place to be wrong.
+     */
+    private fun looksLikeBitcoinAddress(input: String): Boolean {
+        val v = input.trim()
+        if (v.contains("@") || v.contains(" ")) return false
+        val lower = v.lowercase()
+        return when {
+            lower.startsWith("bc1") -> v.length in 14..90
+            v.startsWith("1") || v.startsWith("3") -> v.length in 26..35
+            else -> false
+        }
+    }
+
     fun processInput(input: String = _sendInput.value) {
         val trimmed = input.trim()
             .removePrefix("lightning:").removePrefix("LIGHTNING:")
@@ -1242,12 +1412,23 @@ class WalletViewModel(
                     description = decoded.description
                 ))
             }
+            looksLikeBitcoinAddress(trimmed) -> {
+                if (walletMode.value != WalletMode.SPARK) {
+                    _sendError.value = "This wallet can't send Bitcoin on-chain."
+                    return
+                }
+                _sendAmount.value = ""
+                _onchainQuote.value = null
+                _onchainSendMax.value = false
+                navigateTo(WalletPage.SendOnchainAmount(trimmed))
+            }
             trimmed.contains("@") && trimmed.contains(".") -> {
                 _sendAmount.value = ""
                 navigateTo(WalletPage.SendAmount(trimmed))
             }
             else -> {
-                _sendError.value = "Enter a lightning address (user@domain) or BOLT11 invoice"
+                _sendError.value =
+                    "Enter a lightning address (user@domain), BOLT11 invoice, or Bitcoin address"
             }
         }
     }

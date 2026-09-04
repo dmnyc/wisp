@@ -116,6 +116,8 @@ import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -168,6 +170,10 @@ import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
 import com.wisp.app.ui.component.generateQrBitmap
 import com.wisp.app.BuildConfig
 import com.wisp.app.R
+import com.wisp.app.repo.OnchainDeposit
+import com.wisp.app.repo.OnchainDepositSummary
+import com.wisp.app.repo.OnchainSendQuote
+import com.wisp.app.repo.OnchainSendSpeed
 import com.wisp.app.repo.BalanceUnit
 import com.wisp.app.repo.WalletBalanceDisplayMode
 import com.wisp.app.repo.FiatPreferences
@@ -236,16 +242,22 @@ fun WalletScreen(
         currentPage is WalletPage.SendConfirm ||
         currentPage is WalletPage.Sending ||
         currentPage is WalletPage.SendResult ||
+        currentPage is WalletPage.SendOnchainAmount ||
+        currentPage is WalletPage.SendOnchainConfirm ||
         currentPage is WalletPage.ReceiveAmount ||
+        currentPage is WalletPage.ReceiveOnchain ||
         currentPage is WalletPage.ReceiveInvoice ||
         currentPage is WalletPage.ReceiveSuccess
 
     val isSendFlow = currentPage is WalletPage.SendInput ||
         currentPage is WalletPage.SendAmount ||
         currentPage is WalletPage.SendConfirm ||
+        currentPage is WalletPage.SendOnchainAmount ||
+        currentPage is WalletPage.SendOnchainConfirm ||
         currentPage is WalletPage.Sending ||
         currentPage is WalletPage.SendResult
     val isReceiveFlow = currentPage is WalletPage.ReceiveAmount ||
+        currentPage is WalletPage.ReceiveOnchain ||
         currentPage is WalletPage.ReceiveInvoice ||
         currentPage is WalletPage.ReceiveSuccess
 
@@ -444,6 +456,8 @@ fun WalletScreen(
                             profileLookup = remember(profileKey) { { viewModel.getProfileData(it) } },
                             nwcNodeAlias = viewModel.nwcNodeAlias.collectAsState().value,
                             pubkey = viewModel.keyRepo.getPubkeyHex(),
+                            onchainDeposits = viewModel.onchainDeposits.collectAsState().value,
+                            onPendingDeposits = { viewModel.navigateTo(WalletPage.ReceiveOnchain) },
                             modifier = Modifier.padding(padding)
                         )
                     }
@@ -457,6 +471,8 @@ fun WalletScreen(
                     is WalletPage.SendInput,
                     is WalletPage.SendAmount,
                     is WalletPage.SendConfirm,
+                    is WalletPage.SendOnchainAmount,
+                    is WalletPage.SendOnchainConfirm,
                     is WalletPage.Sending,
                     is WalletPage.SendResult -> {
                         // Home stays visible behind the send bottom sheet.
@@ -493,10 +509,13 @@ fun WalletScreen(
                             profileLookup = remember(profileKey) { { viewModel.getProfileData(it) } },
                             nwcNodeAlias = viewModel.nwcNodeAlias.collectAsState().value,
                             pubkey = viewModel.keyRepo.getPubkeyHex(),
+                            onchainDeposits = viewModel.onchainDeposits.collectAsState().value,
+                            onPendingDeposits = { viewModel.navigateTo(WalletPage.ReceiveOnchain) },
                             modifier = Modifier.padding(padding)
                         )
                     }
                     is WalletPage.ReceiveAmount,
+                    is WalletPage.ReceiveOnchain,
                     is WalletPage.ReceiveInvoice,
                     is WalletPage.ReceiveSuccess -> {
                         // Home stays visible behind the receive bottom sheet.
@@ -533,6 +552,8 @@ fun WalletScreen(
                             profileLookup = remember(profileKey) { { viewModel.getProfileData(it) } },
                             nwcNodeAlias = viewModel.nwcNodeAlias.collectAsState().value,
                             pubkey = viewModel.keyRepo.getPubkeyHex(),
+                            onchainDeposits = viewModel.onchainDeposits.collectAsState().value,
+                            onPendingDeposits = { viewModel.navigateTo(WalletPage.ReceiveOnchain) },
                             modifier = Modifier.padding(padding)
                         )
                     }
@@ -568,6 +589,8 @@ fun WalletScreen(
                             profileLookup = remember(profileKey) { { viewModel.getProfileData(it) } },
                             nwcNodeAlias = viewModel.nwcNodeAlias.collectAsState().value,
                             pubkey = viewModel.keyRepo.getPubkeyHex(),
+                            onchainDeposits = viewModel.onchainDeposits.collectAsState().value,
+                            onPendingDeposits = { viewModel.navigateTo(WalletPage.ReceiveOnchain) },
                             modifier = Modifier.padding(padding)
                         )
                     }
@@ -683,6 +706,8 @@ fun WalletScreen(
                             profileLookup = remember(profileKey) { { viewModel.getProfileData(it) } },
                             nwcNodeAlias = viewModel.nwcNodeAlias.collectAsState().value,
                             pubkey = viewModel.keyRepo.getPubkeyHex(),
+                            onchainDeposits = viewModel.onchainDeposits.collectAsState().value,
+                            onPendingDeposits = { viewModel.navigateTo(WalletPage.ReceiveOnchain) },
                             modifier = Modifier.padding(padding)
                         )
                     }
@@ -742,6 +767,40 @@ fun WalletScreen(
                                     }
                                 )
                             }
+                            is WalletPage.SendOnchainAmount -> {
+                                SendOnchainAmountContent(
+                                    address = page.address,
+                                    amount = viewModel.sendAmount.collectAsState().value,
+                                    sendMax = viewModel.onchainSendMax.collectAsState().value,
+                                    balanceMsats = balanceMsats,
+                                    error = viewModel.sendError.collectAsState().value,
+                                    onDigit = { viewModel.updateSendAmount(it) },
+                                    onBackspace = { viewModel.sendAmountBackspace() },
+                                    onSendMaxChange = { viewModel.setOnchainSendMax(it) },
+                                    onNext = { viewModel.navigateTo(WalletPage.SendOnchainConfirm(page.address)) }
+                                )
+                            }
+                            is WalletPage.SendOnchainConfirm -> {
+                                val quote = viewModel.onchainQuote.collectAsState().value
+                                val speed = viewModel.onchainSpeed.collectAsState().value
+                                val sendMax = viewModel.onchainSendMax.collectAsState().value
+                                SendOnchainConfirmContent(
+                                    address = page.address,
+                                    quote = quote,
+                                    speed = speed,
+                                    sendMax = sendMax,
+                                    balanceMsats = balanceMsats,
+                                    isQuoting = viewModel.isQuoting.collectAsState().value,
+                                    isSending = viewModel.isLoading.collectAsState().value,
+                                    error = viewModel.sendError.collectAsState().value,
+                                    onSpeedChange = { viewModel.setOnchainSpeed(it) },
+                                    onQuote = {
+                                        val sats = if (sendMax) 0L else (viewModel.sendAmount.value.toLongOrNull() ?: 0L)
+                                        viewModel.quoteOnchainSend(page.address, sats)
+                                    },
+                                    onSend = { viewModel.sendOnchain() }
+                                )
+                            }
                             is WalletPage.SendConfirm -> {
                                 val feeState by viewModel.feeState.collectAsState()
                                 val walletMode by viewModel.walletMode.collectAsState()
@@ -787,8 +846,25 @@ fun WalletScreen(
                                 isLoading = viewModel.isLoading.collectAsState().value,
                                 lightningAddress = viewModel.lightningAddress.collectAsState().value,
                                 onAmountChange = { viewModel.setReceiveAmount(it) },
-                                onGenerate = { sats, note, expirySecs -> viewModel.generateInvoice(sats, note, expirySecs) }
+                                onGenerate = { sats, note, expirySecs -> viewModel.generateInvoice(sats, note, expirySecs) },
+                                // On-chain receive is Spark-only; NWC has no
+                                // deposit address to show.
+                                onReceiveOnchain = if (viewModel.walletMode.collectAsState().value == WalletMode.SPARK) {
+                                    { viewModel.navigateTo(WalletPage.ReceiveOnchain) }
+                                } else null
                             )
+                            is WalletPage.ReceiveOnchain -> {
+                                LaunchedEffect(Unit) {
+                                    viewModel.loadOnchainAddress()
+                                    viewModel.refreshOnchainDeposits()
+                                }
+                                ReceiveOnchainContent(
+                                    address = viewModel.onchainAddress.collectAsState().value,
+                                    deposits = viewModel.onchainDeposits.collectAsState().value,
+                                    onNewAddress = { viewModel.loadOnchainAddress(newAddress = true) },
+                                    onClaim = { deposit, feeSats -> viewModel.claimOnchainDeposit(deposit, feeSats) }
+                                )
+                            }
                             is WalletPage.ReceiveInvoice -> ReceiveInvoiceContent(
                                 invoice = page.invoice,
                                 amountSats = page.amountSats,
@@ -1210,6 +1286,8 @@ private fun WalletHomeContent(
     profileLookup: (String) -> com.wisp.app.nostr.ProfileData? = { null },
     nwcNodeAlias: String? = null,
     pubkey: String? = null,
+    onchainDeposits: OnchainDepositSummary = OnchainDepositSummary(),
+    onPendingDeposits: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val balanceSats = balanceMsats / 1000
@@ -1319,6 +1397,46 @@ private fun WalletHomeContent(
                     }
                 }
             }
+        }
+
+        // ── Pending on-chain deposits ───────────────────────────────
+        // Money that has arrived but isn't spendable yet. On the home screen
+        // rather than only in the receive flow: a deposit lands with no user
+        // action and takes three confirmations, so requiring the user to be
+        // on the right screen to find out is how "my bitcoin never arrived"
+        // happens.
+        if (!onchainDeposits.isEmpty) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onPendingDeposits),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "${onchainDeposits.pendingSats} sats on the way",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            when {
+                                onchainDeposits.deposits.any { it.isClaimInFlight } -> "Claiming now — settling"
+                                onchainDeposits.deposits.any { it.failure != null } ->
+                                    onchainDeposits.deposits.first { it.failure != null }.failure!!.message
+                                else -> "Waiting for confirmations"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
         }
 
         // ── Banner row ──────────────────────────────────────────────
@@ -2331,6 +2449,7 @@ private fun ReceiveAmountContent(
     onAmountChange: (String) -> Unit,
     onGenerate: (Long, String, Int) -> Unit,
     onShowAddressQR: () -> Unit = {},
+    onReceiveOnchain: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val receiveCtx = LocalContext.current
@@ -2662,6 +2781,15 @@ private fun ReceiveAmountContent(
             }
         }
 
+        if (onReceiveOnchain != null) {
+            Spacer(Modifier.height(24.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = onReceiveOnchain, modifier = Modifier.fillMaxWidth()) {
+                Text("Receive Bitcoin on-chain")
+            }
+        }
+
         Spacer(Modifier.height(24.dp))
     }
 }
@@ -2731,6 +2859,442 @@ private fun LightningAddressReceiveRow(
 }
 
 // --- Receive invoice (QR code) ---
+
+/**
+ * Deposit address plus anything still waiting to be claimed.
+ *
+ * The wallet can't say how far along a confirmation is — the SDK reports only
+ * a matured / not-matured flag, with no count — so each pending deposit offers
+ * its transaction id and a block explorer link instead of a fabricated "2 of
+ * 3". The explorer is the authoritative answer to "where are my sats".
+ */
+@Composable
+private fun ReceiveOnchainContent(
+    address: String?,
+    deposits: OnchainDepositSummary,
+    onNewAddress: () -> Unit,
+    onClaim: (OnchainDeposit, Long?) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val ctx = LocalContext.current
+    val clipboard = remember { ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager }
+    var pendingFeeConfirm by remember { mutableStateOf<OnchainDeposit?>(null) }
+
+    val qrBitmap = remember(address) {
+        address?.let { addr ->
+            val matrix = QRCodeWriter().encode("bitcoin:$addr", BarcodeFormat.QR_CODE, 512, 512)
+            Bitmap.createBitmap(matrix.width, matrix.height, Bitmap.Config.RGB_565).also { bmp ->
+                for (x in 0 until matrix.width) {
+                    for (y in 0 until matrix.height) {
+                        bmp.setPixel(
+                            x, y,
+                            if (matrix.get(x, y)) android.graphics.Color.BLACK
+                            else android.graphics.Color.WHITE
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    pendingFeeConfirm?.let { deposit ->
+        val failure = deposit.failure
+        if (failure is OnchainDeposit.Failure.FeeExceeded) {
+            AlertDialog(
+                onDismissRequest = { pendingFeeConfirm = null },
+                title = { Text("Claim deposit?") },
+                text = {
+                    Text(
+                        "On-chain fees are high right now. Claiming your " +
+                            "${deposit.amountSats} sats will pay about " +
+                            "${failure.requiredSats} sats in fees."
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        onClaim(deposit, failure.requiredSats)
+                        pendingFeeConfirm = null
+                    }) { Text("Claim") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingFeeConfirm = null }) { Text("Cancel") }
+                }
+            )
+        }
+    }
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(horizontal = 16.dp)
+            .verticalScroll(rememberScrollState()),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Spacer(Modifier.height(16.dp))
+
+        if (qrBitmap != null && address != null) {
+            Image(
+                bitmap = qrBitmap.asImageBitmap(),
+                contentDescription = "Bitcoin deposit address",
+                modifier = Modifier.size(240.dp)
+            )
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "Send Bitcoin on-chain to this address",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(12.dp))
+            Text(
+                address,
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center
+            )
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = {
+                    clipboard.setPrimaryClip(ClipData.newPlainText("bitcoin address", address))
+                }) { Text("Copy") }
+                TextButton(onClick = onNewAddress) { Text("New address") }
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Funds arrive after the transaction confirms. Older addresses keep " +
+                    "working — they stay valid for future deposits.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
+        } else {
+            CircularProgressIndicator()
+        }
+
+        if (!deposits.isEmpty) {
+            Spacer(Modifier.height(24.dp))
+            Text(
+                "PENDING DEPOSITS",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(8.dp))
+            deposits.deposits.forEach { deposit ->
+                OnchainDepositRow(
+                    deposit = deposit,
+                    onCopyTxid = {
+                        clipboard.setPrimaryClip(ClipData.newPlainText("transaction id", deposit.txid))
+                    },
+                    onClaim = {
+                        if (deposit.failure is OnchainDeposit.Failure.FeeExceeded) {
+                            pendingFeeConfirm = deposit
+                        } else {
+                            onClaim(deposit, null)
+                        }
+                    }
+                )
+                Spacer(Modifier.height(8.dp))
+            }
+        }
+
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun OnchainDepositRow(
+    deposit: OnchainDeposit,
+    onCopyTxid: () -> Unit,
+    onClaim: () -> Unit,
+) {
+    val ctx = LocalContext.current
+    val status = when {
+        deposit.isClaimInFlight -> "Claiming now — settling…"
+        deposit.failure != null -> deposit.failure.message
+        // Same line whether or not it has matured: a confirmed deposit is
+        // claimed automatically and the row disappears when it lands, so
+        // announcing that stage tells the user about bookkeeping they can't
+        // act on.
+        else -> "Waiting for confirmations"
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
+            .padding(12.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "${deposit.amountSats} sats",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    status,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (deposit.isClaimable) {
+                TextButton(onClick = onClaim) {
+                    Text(if (deposit.failure is OnchainDeposit.Failure.FeeExceeded) "Claim…" else "Claim")
+                }
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            TextButton(onClick = onCopyTxid) { Text("Copy ID", style = MaterialTheme.typography.labelSmall) }
+            TextButton(onClick = {
+                ctx.startActivity(
+                    Intent(Intent.ACTION_VIEW, Uri.parse("https://mempool.space/tx/${deposit.txid}"))
+                )
+            }) { Text("Explorer", style = MaterialTheme.typography.labelSmall) }
+        }
+    }
+}
+
+/** Amount entry for an on-chain send, with the option to empty the wallet. */
+@Composable
+private fun SendOnchainAmountContent(
+    address: String,
+    amount: String,
+    sendMax: Boolean,
+    balanceMsats: Long?,
+    error: String?,
+    onDigit: (Char) -> Unit,
+    onBackspace: () -> Unit,
+    onSendMaxChange: (Boolean) -> Unit,
+    onNext: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(horizontal = 16.dp)
+            .verticalScroll(rememberScrollState()),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Spacer(Modifier.height(16.dp))
+        Text(
+            "Send to Bitcoin address",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            address,
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = FontFamily.Monospace,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
+        )
+        if (balanceMsats != null) {
+            Spacer(Modifier.height(8.dp))
+            // On-chain what clears is the amount plus the fee, so a send that
+            // looks affordable can fail on a total the user was never shown.
+            Text(
+                "Available ${balanceMsats / 1000} sats",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        Spacer(Modifier.height(16.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(checked = sendMax, onCheckedChange = onSendMaxChange)
+            Text("Send all funds", color = MaterialTheme.colorScheme.onSurface)
+        }
+
+        if (!sendMax) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                if (amount.isEmpty()) "0" else amount,
+                style = MaterialTheme.typography.headlineLarge,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                "sats",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(8.dp))
+            SatsNumpad(
+                amount = amount,
+                onDigit = onDigit,
+                onBackspace = onBackspace,
+                onConfirm = onNext,
+                confirmEnabled = (amount.toLongOrNull() ?: 0L) > 0L
+            )
+        }
+
+        if (error != null) {
+            Spacer(Modifier.height(8.dp))
+            Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+        }
+
+        if (sendMax) {
+            Spacer(Modifier.height(16.dp))
+            Button(onClick = onNext, modifier = Modifier.fillMaxWidth()) { Text("Next") }
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+/**
+ * Fee quote and confirmation for an on-chain send. Two steps on purpose: an
+ * on-chain fee is added on top of the amount rather than taken out of it, and
+ * doesn't scale with the amount, so it has to be seen before it's paid.
+ */
+@Composable
+private fun SendOnchainConfirmContent(
+    address: String,
+    quote: OnchainSendQuote?,
+    speed: OnchainSendSpeed,
+    sendMax: Boolean,
+    balanceMsats: Long?,
+    isQuoting: Boolean,
+    isSending: Boolean,
+    error: String?,
+    onSpeedChange: (OnchainSendSpeed) -> Unit,
+    onQuote: () -> Unit,
+    onSend: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val availableSats = balanceMsats?.let { it / 1000 }
+    // Draining can't overspend by construction — the fee comes out of the
+    // balance rather than on top — so this only catches a typed amount whose
+    // fee pushes the total past the balance.
+    val exceedsBalance = quote != null && availableSats != null && !sendMax &&
+        quote.totalSats > availableSats
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(horizontal = 16.dp)
+            .verticalScroll(rememberScrollState()),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Spacer(Modifier.height(16.dp))
+        Text(
+            "Confirm on-chain send",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            address,
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = FontFamily.Monospace,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
+        )
+
+        Spacer(Modifier.height(16.dp))
+        Text(
+            "CONFIRMATION SPEED",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OnchainSendSpeed.entries.forEach { option ->
+                FilterChip(
+                    selected = speed == option,
+                    onClick = { onSpeedChange(option) },
+                    label = { Text(option.label) }
+                )
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            speed.detail,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        Spacer(Modifier.height(16.dp))
+        when {
+            isQuoting -> CircularProgressIndicator()
+            quote != null -> {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                            RoundedCornerShape(12.dp)
+                        )
+                        .padding(12.dp)
+                ) {
+                    QuoteRow("Amount", "${quote.amountSats} sats")
+                    QuoteRow("Network fee", "${quote.feeSats} sats")
+                    HorizontalDivider(Modifier.padding(vertical = 6.dp))
+                    QuoteRow("Total", "${quote.totalSats} sats", emphasized = true)
+                    if (exceedsBalance) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "That's more than you have. The fee is added on top of the " +
+                                "amount, so you need ${quote.totalSats} sats in total.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                    if (quote.leavesTokensBehind) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "This sends bitcoin only. Other token balances in this wallet " +
+                                "stay behind — Wisp can't move them.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (quote.isFeeDisproportionate) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "The fee is ${(quote.feeShare * 100).toInt()}% of what you're " +
+                                "sending. A Lightning payment would cost far less.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+
+        if (error != null) {
+            Spacer(Modifier.height(8.dp))
+            Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+        }
+
+        Spacer(Modifier.height(16.dp))
+        Button(
+            onClick = { if (quote == null) onQuote() else onSend() },
+            enabled = !isQuoting && !isSending && !exceedsBalance,
+            modifier = Modifier.fillMaxWidth()
+        ) { Text(if (quote == null) "Get fee quote" else "Send on-chain") }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun QuoteRow(label: String, value: String, emphasized: Boolean = false) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            label,
+            style = if (emphasized) MaterialTheme.typography.titleSmall else MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            value,
+            style = if (emphasized) MaterialTheme.typography.titleSmall else MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+    }
+}
 
 @Composable
 private fun ReceiveInvoiceContent(

@@ -1,5 +1,6 @@
 package com.wisp.app.repo
 
+import java.math.BigInteger
 import android.content.Context
 import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
@@ -7,7 +8,14 @@ import androidx.security.crypto.MasterKey
 import breez_sdk_spark.CheckLightningAddressRequest
 import breez_sdk_spark.ClaimDepositRequest
 import breez_sdk_spark.ConnectRequest
+import breez_sdk_spark.DepositClaimError
 import breez_sdk_spark.DepositInfo
+import breez_sdk_spark.FeePolicy
+import breez_sdk_spark.InstantClaimStatus
+import breez_sdk_spark.InstantClaimDeclineReason
+import breez_sdk_spark.OnchainConfirmationSpeed
+import breez_sdk_spark.PrepareSendPaymentResponse
+import breez_sdk_spark.SendOnchainSpeedFeeQuote
 import breez_sdk_spark.EventListener
 import breez_sdk_spark.GetInfoRequest
 import breez_sdk_spark.ListPaymentsRequest
@@ -15,6 +23,7 @@ import breez_sdk_spark.MaxFee
 import breez_sdk_spark.Network
 import breez_sdk_spark.PaymentDetails
 import breez_sdk_spark.PaymentRequest
+import breez_sdk_spark.PaymentStatus
 import breez_sdk_spark.PaymentType
 import breez_sdk_spark.PrepareSendPaymentRequest
 import breez_sdk_spark.ReceivePaymentMethod
@@ -93,6 +102,11 @@ class SparkRepository(
     private var eventListenerId: String? = null
     private var scope: CoroutineScope? = null
 
+    /**
+     * Whether a full sync has landed this session. Until it has, a zero from
+     * the SDK means "nothing loaded yet", not "no funds".
+     */
+    private var hasSyncedOnce = false
     private val _balance = MutableStateFlow<Long?>(null)
     override val balance: StateFlow<Long?> = _balance
 
@@ -311,6 +325,10 @@ class SparkRepository(
                         when (e) {
                             is SdkEvent.Synced -> {
                                 emitStatus("Synced")
+                                hasSyncedOnce = true
+                                // The balance held back before the first sync
+                                // is published now that a zero can be trusted.
+                                refreshBalanceInternal()
                             }
                             is SdkEvent.PaymentSucceeded -> {
                                 emitStatus("Payment succeeded")
@@ -382,8 +400,17 @@ class SparkRepository(
         try {
             val instance = sdk ?: return
             val info = instance.getInfo(GetInfoRequest(ensureSynced = false))
-            _balance.value = info.balanceSats.toLong() * 1000 // convert sats to msats
+            val msats = info.balanceSats.toLong() * 1000 // convert sats to msats
             _identityPubkey.value = info.identityPubkey
+            // Before the first sync completes the SDK reports local state,
+            // which on a fresh install is zero — and GetInfoResponse has no
+            // flag distinguishing that from a genuinely empty wallet. Passing
+            // it on turns "not known yet" into a stated zero: the dashboard
+            // shows a confident 0 sats over a funded wallet. A non-zero
+            // balance is trustworthy whenever it arrives; a zero has to wait
+            // for Synced to confirm it.
+            if (msats == 0L && !hasSyncedOnce) return
+            _balance.value = msats
         } catch (e: Exception) {
             Log.e(TAG, "Failed to refresh balance", e)
         }
@@ -394,8 +421,9 @@ class SparkRepository(
             val instance = sdk ?: return@withContext Result.failure(Exception("Not connected"))
             val info = instance.getInfo(GetInfoRequest(ensureSynced = false))
             val balanceMsats = info.balanceSats.toLong() * 1000
-            _balance.value = balanceMsats
             _identityPubkey.value = info.identityPubkey
+            if (balanceMsats == 0L && !hasSyncedOnce) return@withContext Result.success(0L)
+            _balance.value = balanceMsats
             Result.success(balanceMsats)
         } catch (e: Exception) {
             Result.failure(e)
@@ -586,6 +614,251 @@ class SparkRepository(
             }
         }
     }
+
+    // --- On-chain receive ---
+
+    /**
+     * Get the Bitcoin deposit address, or rotate to a fresh one. Funds sent to
+     * it confirm on-chain and are then claimed into the spendable balance by
+     * [claimDeposits]. Rotation never invalidates the previous address — the
+     * SDK keeps old ones working for future deposits.
+     */
+    suspend fun receiveOnchainAddress(newAddress: Boolean = false): Result<String> =
+        withContext(Dispatchers.IO) {
+            try {
+                val instance = sdk ?: return@withContext Result.failure(Exception("Not connected"))
+                val method = ReceivePaymentMethod.BitcoinAddress(
+                    newAddress = if (newAddress) true else null
+                )
+                val response = instance.receivePayment(ReceivePaymentRequest(method))
+                Result.success(response.paymentRequest)
+            } catch (e: Exception) {
+                Log.e(TAG, "receiveOnchainAddress failed", e)
+                Result.failure(e)
+            }
+        }
+
+    /**
+     * Snapshot of deposits waiting to be claimed. The auto-claimer handles the
+     * routine cases; this surfaces the ones it can't settle (mostly network
+     * fees above the claim cap) so a deposit is never silently stuck.
+     */
+    suspend fun listOnchainDeposits(): OnchainDepositSummary = withContext(Dispatchers.IO) {
+        try {
+            val instance = sdk ?: return@withContext OnchainDepositSummary()
+            val response = instance.listUnclaimedDeposits(breez_sdk_spark.ListUnclaimedDepositsRequest)
+            OnchainDepositSummary(response.deposits.map { it.toOnchainDeposit() })
+        } catch (e: Exception) {
+            Log.d(TAG, "listUnclaimedDeposits failed: ${e.message}")
+            OnchainDepositSummary()
+        }
+    }
+
+    /**
+     * Maps the SDK's deposit type onto the UI model. Kept here so
+     * [OnchainDeposit] stays SDK-free and unit-testable.
+     */
+    private fun DepositInfo.toOnchainDeposit(): OnchainDeposit {
+        val mappedFailure = when (val err = claimError) {
+            is DepositClaimError.MaxDepositClaimFeeExceeded ->
+                OnchainDeposit.Failure.FeeExceeded(err.requiredFeeSats.toLong())
+            is DepositClaimError.MissingUtxo -> OnchainDeposit.Failure.MissingUtxo
+            is DepositClaimError.Generic -> OnchainDeposit.Failure.Other(err.message)
+            null -> null
+        }
+        val mappedInstant = when (val status = instantClaimStatus) {
+            is InstantClaimStatus.Submitted -> OnchainDeposit.InstantClaim.Submitted
+            is InstantClaimStatus.Declined -> OnchainDeposit.InstantClaim.Declined(
+                when (val reason = status.reason) {
+                    is InstantClaimDeclineReason.NoPlan ->
+                        OnchainDeposit.InstantClaim.Reason.NoPlan
+                    is InstantClaimDeclineReason.FeeExceeded ->
+                        OnchainDeposit.InstantClaim.Reason.FeeExceeded(
+                            quotedSats = reason.quotedSats.toLong(),
+                            quotedBps = reason.quotedBps.toInt()
+                        )
+                    is InstantClaimDeclineReason.SubmissionFailed ->
+                        OnchainDeposit.InstantClaim.Reason.SubmissionFailed
+                }
+            )
+            null -> null
+        }
+        return OnchainDeposit(
+            txid = txid,
+            vout = vout,
+            amountSats = amountSats.toLong(),
+            isMature = isMature,
+            instantClaim = mappedInstant,
+            failure = mappedFailure,
+        )
+    }
+
+    /**
+     * Re-claim a deposit the automatic claimer couldn't settle. [feeSats] caps
+     * the claim fee: pass the SDK-required fee surfaced from the claim error to
+     * accept a cost above the automatic limit — the UI confirms that with the
+     * user first, so paying more is a deliberate choice. Null retries at the
+     * same cap the automatic claimer uses.
+     */
+    suspend fun claimOnchainDeposit(txid: String, vout: UInt, feeSats: Long?): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            try {
+                val instance = sdk ?: return@withContext Result.failure(Exception("Not connected"))
+                val maxFee = if (feeSats != null) {
+                    MaxFee.Fixed(amount = feeSats.toULong())
+                } else {
+                    MaxFee.NetworkRecommended(leewaySatPerVbyte = 5UL)
+                }
+                instance.claimDeposit(ClaimDepositRequest(txid = txid, vout = vout, maxFee = maxFee))
+                emitStatus("Claimed on-chain deposit")
+                refreshBalanceInternal()
+                _transactionsChanged.tryEmit(Unit)
+                Result.success(Unit)
+            } catch (e: Exception) {
+                emitStatus("Failed to claim deposit: ${e.message}")
+                Result.failure(e)
+            }
+        }
+
+    // --- On-chain send ---
+
+    /**
+     * Quote held between the user seeing a fee and confirming it, so the send
+     * that goes out is the one that was signed off.
+     */
+    private var preparedOnchainSend: Pair<OnchainSendQuote, PrepareSendPaymentResponse>? = null
+
+    /**
+     * Quote sending [amountSats] to a Bitcoin address. Fees are added on top,
+     * so the recipient receives exactly the amount and the wallet spends the
+     * quote's total.
+     *
+     * [drainAll] empties the wallet instead: the amount becomes the whole
+     * spendable balance and the fee comes out of it, because a send of the full
+     * balance can never pay a fee on top.
+     */
+    suspend fun prepareSendOnchain(
+        address: String,
+        amountSats: Long,
+        speed: OnchainSendSpeed,
+        drainAll: Boolean = false,
+    ): Result<OnchainSendQuote> = withContext(Dispatchers.IO) {
+        try {
+            val instance = sdk ?: return@withContext Result.failure(Exception("Not connected"))
+            var strandsTokens = false
+            val requestedSats: Long
+            if (drainAll) {
+                // Quote against a synced balance — a stale cached figure
+                // produces a fee for an amount that no longer exists.
+                val info = instance.getInfo(GetInfoRequest(ensureSynced = true))
+                requestedSats = info.balanceSats.toLong()
+                if (requestedSats <= 0L) {
+                    return@withContext Result.failure(Exception("This wallet has no spendable balance."))
+                }
+                // Draining moves bitcoin only. A wallet imported from an app
+                // that deals in stablecoins can hold a token balance this send
+                // won't carry, and this app has no way to convert it.
+                strandsTokens = info.tokenBalances.values.any { it.balance > BigInteger.ZERO }
+            } else {
+                if (amountSats <= 0L) {
+                    return@withContext Result.failure(Exception("Enter an amount to send."))
+                }
+                requestedSats = amountSats
+            }
+
+            val prepared = instance.prepareSendPayment(
+                PrepareSendPaymentRequest(
+                    paymentRequest = PaymentRequest.Input(address),
+                    amount = BigInteger.valueOf(requestedSats),
+                    tokenIdentifier = null,
+                    conversionOptions = null,
+                    feePolicy = if (drainAll) FeePolicy.FEES_INCLUDED else FeePolicy.FEES_EXCLUDED,
+                )
+            )
+
+            val method = prepared.paymentMethod
+            if (method !is SendPaymentMethod.BitcoinAddress) {
+                // The input parsed as something else — a Lightning invoice or
+                // Spark address in the address field. Refuse rather than
+                // silently sending somewhere the user didn't intend.
+                return@withContext Result.failure(Exception("That isn't a Bitcoin address."))
+            }
+            val tier: SendOnchainSpeedFeeQuote = when (speed) {
+                OnchainSendSpeed.SLOW -> method.feeQuote.speedSlow
+                OnchainSendSpeed.MEDIUM -> method.feeQuote.speedMedium
+                OnchainSendSpeed.FAST -> method.feeQuote.speedFast
+            }
+            val feeSats = tier.userFeeSat.toLong() + tier.l1BroadcastFeeSat.toLong()
+
+            // The quote's amount is always what lands at the destination.
+            // Draining spends the balance and the fee comes out of it.
+            val deliveredSats = if (drainAll) (requestedSats - feeSats).coerceAtLeast(0L) else requestedSats
+            if (deliveredSats <= 0L) {
+                return@withContext Result.failure(
+                    Exception("The fee is larger than the balance. Nothing would arrive.")
+                )
+            }
+
+            val quote = OnchainSendQuote(
+                address = address,
+                amountSats = deliveredSats,
+                feeSats = feeSats,
+                speed = speed,
+                leavesTokensBehind = strandsTokens,
+            )
+            preparedOnchainSend = quote to prepared
+            Result.success(quote)
+        } catch (e: Exception) {
+            emitStatus("Quote failed: ${e.message}")
+            Result.failure(e)
+        }
+    }
+
+    /** Send the quote the user confirmed. Refuses anything else. */
+    suspend fun executeSendOnchain(quote: OnchainSendQuote): Result<String> =
+        withContext(Dispatchers.IO) {
+            try {
+                val instance = sdk ?: return@withContext Result.failure(Exception("Not connected"))
+                // Only ever send the quote that was actually signed off. A
+                // mismatch means the screen drifted from what the user agreed
+                // to — re-quote rather than send a different amount or
+                // destination.
+                val held = preparedOnchainSend
+                if (held == null || held.first != quote) {
+                    return@withContext Result.failure(
+                        Exception("This quote expired. Check the amount and try again.")
+                    )
+                }
+                val sdkSpeed = when (quote.speed) {
+                    OnchainSendSpeed.SLOW -> OnchainConfirmationSpeed.SLOW
+                    OnchainSendSpeed.MEDIUM -> OnchainConfirmationSpeed.MEDIUM
+                    OnchainSendSpeed.FAST -> OnchainConfirmationSpeed.FAST
+                }
+                emitStatus("Sending on-chain...")
+                val response = instance.sendPayment(
+                    breez_sdk_spark.SendPaymentRequest(
+                        prepareResponse = held.second,
+                        options = SendPaymentOptions.BitcoinAddress(confirmationSpeed = sdkSpeed),
+                        idempotencyKey = null,
+                    )
+                )
+                preparedOnchainSend = null
+                // A failed payment comes back WITHOUT throwing, so the status
+                // has to be inspected rather than trusted.
+                if (response.payment.status == PaymentStatus.FAILED) {
+                    emitStatus("On-chain send failed")
+                    return@withContext Result.failure(
+                        Exception("The send failed - your sats were not sent.")
+                    )
+                }
+                refreshBalanceInternal()
+                _transactionsChanged.tryEmit(Unit)
+                Result.success(response.payment.id)
+            } catch (e: Exception) {
+                emitStatus("On-chain send failed: ${e.message}")
+                Result.failure(e)
+            }
+        }
 
     // --- Transactions ---
 
