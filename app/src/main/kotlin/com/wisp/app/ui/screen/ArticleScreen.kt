@@ -33,6 +33,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -57,6 +58,9 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.wisp.app.repo.EventRepository
 import com.wisp.app.ui.component.ProfilePicture
+import com.wisp.app.nostr.Nip19
+import com.wisp.app.nostr.toHex
+import com.wisp.app.nostr.hexToByteArray
 import com.wisp.app.nostr.Nip30
 import com.wisp.app.nostr.toNpub
 import com.wisp.app.nostr.NostrEvent
@@ -114,6 +118,19 @@ fun ArticleScreen(
 
     val blocks = remember(article) {
         article?.content?.let { parseMarkdownBlocks(it) } ?: emptyList()
+    }
+
+    // Mentions in the body are raw bech32 inside markdown, so nothing else
+    // asks for these profiles — the renderer would fall back to a short npub
+    // for every one of them.
+    LaunchedEffect(article?.id) {
+        article?.content?.let { content ->
+            profileMentions(content).forEach { eventRepo.requestProfileIfMissing(it) }
+        }
+    }
+    // Keyed on the profile version so a name arriving late re-renders the body.
+    val nameForPubkey: (String) -> String? = remember(profileVersion) {
+        { pubkey -> eventRepo.getProfileData(pubkey)?.displayName }
     }
 
     val articleEmojiMap = remember(article) {
@@ -243,11 +260,11 @@ fun ArticleScreen(
                     items(blocks.size, key = { "block-$it" }) { index ->
                         val block = blocks[index]
                         when (block) {
-                            is MdBlock.Heading -> ArticleHeading(block, emojiMap)
-                            is MdBlock.Paragraph -> ArticleParagraph(block, emojiMap)
+                            is MdBlock.Heading -> ArticleHeading(block, emojiMap, nameForPubkey)
+                            is MdBlock.Paragraph -> ArticleParagraph(block, emojiMap, nameForPubkey)
                             is MdBlock.Image -> ArticleImage(block)
                             is MdBlock.CodeBlock -> ArticleCodeBlock(block)
-                            is MdBlock.BlockQuote -> ArticleBlockQuote(block, emojiMap)
+                            is MdBlock.BlockQuote -> ArticleBlockQuote(block, emojiMap, nameForPubkey)
                             is MdBlock.NostrEmbed -> ArticleNostrEmbed(
                                 block = block,
                                 eventRepo = eventRepo,
@@ -418,7 +435,7 @@ fun ArticleScreen(
 // -- Block renderer composables --
 
 @Composable
-private fun ArticleHeading(block: MdBlock.Heading, emojiMap: Map<String, String>) {
+private fun ArticleHeading(block: MdBlock.Heading, emojiMap: Map<String, String>, nameForPubkey: (String) -> String? = { null }) {
     val style = when (block.level) {
         1 -> MaterialTheme.typography.headlineLarge
         2 -> MaterialTheme.typography.headlineMedium
@@ -427,7 +444,7 @@ private fun ArticleHeading(block: MdBlock.Heading, emojiMap: Map<String, String>
         5 -> MaterialTheme.typography.titleMedium
         else -> MaterialTheme.typography.titleSmall
     }
-    val formatted = formatInlineWithEmoji(block.text, emojiMap)
+    val formatted = formatInlineWithEmoji(block.text, emojiMap, nameForPubkey)
     Text(
         text = formatted.text,
         style = style,
@@ -438,8 +455,8 @@ private fun ArticleHeading(block: MdBlock.Heading, emojiMap: Map<String, String>
 }
 
 @Composable
-private fun ArticleParagraph(block: MdBlock.Paragraph, emojiMap: Map<String, String>) {
-    val formatted = formatInlineWithEmoji(block.text, emojiMap)
+private fun ArticleParagraph(block: MdBlock.Paragraph, emojiMap: Map<String, String>, nameForPubkey: (String) -> String? = { null }) {
+    val formatted = formatInlineWithEmoji(block.text, emojiMap, nameForPubkey)
     Text(
         text = formatted.text,
         style = MaterialTheme.typography.bodyLarge,
@@ -492,8 +509,8 @@ private fun ArticleCodeBlock(block: MdBlock.CodeBlock) {
 }
 
 @Composable
-private fun ArticleBlockQuote(block: MdBlock.BlockQuote, emojiMap: Map<String, String>) {
-    val formatted = formatInlineWithEmoji(block.text, emojiMap)
+private fun ArticleBlockQuote(block: MdBlock.BlockQuote, emojiMap: Map<String, String>, nameForPubkey: (String) -> String? = { null }) {
+    val formatted = formatInlineWithEmoji(block.text, emojiMap, nameForPubkey)
     Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
         Box(
             modifier = Modifier
@@ -540,16 +557,23 @@ private data class FormattedInline(
 @Composable
 private fun formatInline(
     text: String,
-    emojiMap: Map<String, String> = emptyMap()
+    emojiMap: Map<String, String> = emptyMap(),
+    nameForPubkey: (String) -> String? = { null }
 ): AnnotatedString {
-    val formatted = formatInlineWithEmoji(text, emojiMap)
+    val formatted = formatInlineWithEmoji(text, emojiMap, nameForPubkey)
     return formatted.text
 }
 
 @Composable
 private fun formatInlineWithEmoji(
     text: String,
-    emojiMap: Map<String, String> = emptyMap()
+    emojiMap: Map<String, String> = emptyMap(),
+    /**
+     * Resolves a mentioned pubkey to a display name. Passed in rather than
+     * looked up here so the caller can key its `remember` on the profile
+     * version and re-render when a name arrives late.
+     */
+    nameForPubkey: (String) -> String? = { null }
 ): FormattedInline {
     val linkColor = MaterialTheme.colorScheme.primary
     val codeBackground = MaterialTheme.colorScheme.surfaceVariant
@@ -678,7 +702,22 @@ private fun formatInlineWithEmoji(
                                     val match = nostrInlineRegex.find(text, i)
                                     if (match != null && match.range.first == i) {
                                         withStyle(SpanStyle(color = linkColor)) {
-                                            append(shortenNostrEntity(match.value))
+                                            // A mention of a person reads as
+                                            // their name. This previously
+                                            // truncated the bech32 for every
+                                            // mention in every article,
+                                            // because the renderer works on
+                                            // raw markdown and never decoded
+                                            // the entity or looked up a
+                                            // profile the way notes do.
+                                            val pubkey = profilePubkey(match.value)
+                                            if (pubkey != null) {
+                                                val name = nameForPubkey(pubkey)?.trimEnd()
+                                                    ?: shortNpub(pubkey)
+                                                append("@$name")
+                                            } else {
+                                                append(shortenNostrEntity(match.value))
+                                            }
                                         }
                                         i = match.range.last + 1
                                     } else {
@@ -748,6 +787,54 @@ private val nostrEntityLineRegex = Regex("""^(?:nostr:)?(?:note1|nevent1|npub1|n
 private val nostrInlineRegex = Regex("""(?:nostr:)?(?:note1|nevent1|npub1|nprofile1|naddr1)[a-z0-9]+""", RegexOption.IGNORE_CASE)
 private val emojiShortcodeRegex = Regex(""":([a-zA-Z0-9_-]+):""")
 
+/**
+ * The pubkey an inline entity refers to, when it refers to a person. Null for
+ * note / event / address refs.
+ *
+ * Article bodies carry mentions as raw bech32 inside markdown text, not as
+ * parsed segments the way note content does, so resolving a name starts by
+ * decoding the entity here.
+ */
+private fun profilePubkey(entity: String): String? {
+    val bare = entity.removePrefix("nostr:").removePrefix("NOSTR:")
+    val lower = bare.lowercase()
+    return try {
+        when {
+            lower.startsWith("npub1") -> Nip19.npubDecode(lower).toHex()
+            lower.startsWith("nprofile1") -> Nip19.nprofileDecode(lower).pubkey
+            else -> null
+        }
+    } catch (e: Exception) {
+        // A prefix that looks right but doesn't decode is not somebody we can
+        // name — fall back rather than showing a name for an unidentified key.
+        null
+    }
+}
+
+/**
+ * Every pubkey mentioned in an article body, so the profiles behind them can
+ * be fetched. Without this the renderer has nothing to resolve against and
+ * every mention falls back to a short npub.
+ */
+private fun profileMentions(content: String): List<String> =
+    nostrInlineRegex.findAll(content)
+        .mapNotNull { profilePubkey(it.value) }
+        .distinct()
+        .toList()
+
+/** Display-only short form of a hex pubkey. Never expose hex to the user. */
+private fun shortNpub(pubkeyHex: String): String = try {
+    val full = Nip19.npubEncode(pubkeyHex.hexToByteArray())
+    "${full.take(9)}\u2026${full.takeLast(4)}"
+} catch (e: Exception) {
+    "${pubkeyHex.take(8)}\u2026"
+}
+
+/**
+ * Shorten a nostr bech32 entity for inline display. Only a last resort for a
+ * person: a mention resolves to a display name via [profilePubkey] first, and
+ * reaches this truncated bech32 only when the entity doesn't decode.
+ */
 private fun shortenNostrEntity(entity: String): String {
     val bare = entity.removePrefix("nostr:").removePrefix("NOSTR:")
     return when {
