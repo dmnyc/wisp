@@ -508,6 +508,7 @@
     <string name="wallet_lightning_address_setup">Set up your Lightning Address</string>
     <string name="wallet_get_username">Get a username@breez.tips address</string>
     <string name="wallet_tap_to_reveal">Tap to reveal</string>
+    <string name="wallet_loading_balance">Loading balance…</string>
     <string name="dm_decrypting">Decrypting messages…</string>
     <string name="dm_mining">Mining…</string>
     <string name="dm_peer">Peer</string>

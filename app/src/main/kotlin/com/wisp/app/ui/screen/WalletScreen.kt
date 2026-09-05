@@ -1289,7 +1289,8 @@ private fun WalletConnectionContent(
 
 @Composable
 private fun WalletHomeContent(
-    balanceMsats: Long,
+    /** Null while the balance is still loading — rendered as a loading label, never as zero. */
+    balanceMsats: Long?,
     walletMode: WalletMode = WalletMode.NWC,
     balanceUnit: BalanceUnit = BalanceUnit.BITCOIN,
     showSettingsAlert: Boolean = false,
@@ -1313,7 +1314,12 @@ private fun WalletHomeContent(
     onPendingDeposits: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val balanceSats = balanceMsats / 1000
+    // No balance has landed yet — not from the network, not from cache — so
+    // there is no number to show. The `?: 0` below is a layout fallback for
+    // the modes that still need a figure, not a known balance; rendering it
+    // as one is what put a confident "0 sats" over funded wallets.
+    val awaitingBalance = balanceMsats == null
+    val balanceSats = (balanceMsats ?: 0L) / 1000
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("wisp_settings", android.content.Context.MODE_PRIVATE) }
     // Tri-state balance display (sats / fiat / hidden) — tap the
@@ -1599,7 +1605,18 @@ private fun WalletHomeContent(
                     WalletBalanceDisplayMode.write(prefs, pubkey, balanceDisplay)
                 }
         ) {
-            when (balanceDisplay) {
+            // A cached balance from a previous session is a real figure and
+            // keeps rendering while a fresh one loads; only a wholly unknown
+            // balance is hidden behind this. Hidden mode still wins — it must
+            // not leak that the wallet is empty-or-loading.
+            if (awaitingBalance && balanceDisplay != WalletBalanceDisplayMode.HIDDEN) {
+                Text(
+                    stringResource(R.string.wallet_loading_balance),
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else when (balanceDisplay) {
                 WalletBalanceDisplayMode.HIDDEN -> {
                     Text(
                         "* * * * *",

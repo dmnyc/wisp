@@ -43,7 +43,16 @@ interface WalletProvider {
     fun hasConnection(): Boolean
     fun connect()
     fun disconnect()
-    suspend fun fetchBalance(): Result<Long>
+    /**
+     * Current balance in msats, or `null` when it isn't known yet.
+     *
+     * Null is not zero. A wallet that hasn't finished its first sync has no
+     * balance to report, and rendering that as "0 sats" reads as an emptied
+     * wallet rather than one still counting — alarming in exactly the moment
+     * a user is least sure their funds arrived. Callers must show a loading
+     * state for null rather than substituting a figure.
+     */
+    suspend fun fetchBalance(): Result<Long?>
     /**
      * Pay a BOLT11 invoice. A returned [Result.success] means the wallet
      * accepted it — check [WalletPayment.settlement] before telling the user
@@ -123,4 +132,42 @@ data class WalletTransaction(
 
     /** Never settled: the sats were not sent and are back in the wallet. */
     val failed: Boolean get() = status == TransactionStatus.FAILED
+}
+
+object TokenAmounts {
+    /**
+     * Shift a token's base-unit amount by its decimal places.
+     *
+     * Operates on the decimal string rather than a numeric type on purpose:
+     * base units are u128 and overflow Long, and Double loses cents well
+     * before that. Trailing zeros are dropped so a whole amount reads "150"
+     * rather than "150.000000".
+     */
+    fun scale(baseUnits: String, decimals: Int): String {
+        val digits = baseUnits.trim()
+        if (digits.isEmpty() || !digits.all { it.isDigit() }) return baseUnits
+        if (decimals <= 0) return digits
+
+        val padded = if (digits.length > decimals) digits
+                     else "0".repeat(decimals - digits.length + 1) + digits
+        val whole = padded.substring(0, padded.length - decimals)
+        val fraction = padded.substring(padded.length - decimals).trimEnd('0')
+        return if (fraction.isEmpty()) whole else "$whole.$fraction"
+    }
+
+    /**
+     * Round a scaled amount to two places for the transaction row. USDB is
+     * dollars, and six places is both unreadable at a glance and wrong for
+     * what the number means; the detail row keeps full precision.
+     *
+     * Dust that would round away to "0.00" keeps its full precision instead -
+     * that would otherwise read as nothing having arrived.
+     */
+    fun compact(scaled: String, places: Int = 2): String {
+        if (!scaled.contains('.')) return scaled
+        val value = scaled.toBigDecimalOrNull() ?: return scaled
+        val rounded = value.setScale(places, java.math.RoundingMode.HALF_UP)
+        if (rounded.signum() == 0 && value.signum() != 0) return scaled
+        return java.text.DecimalFormat("#,##0.00").format(rounded)
+    }
 }

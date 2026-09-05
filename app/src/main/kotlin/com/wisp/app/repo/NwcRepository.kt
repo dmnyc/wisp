@@ -286,7 +286,10 @@ class NwcRepository(private val context: Context, private val relayPool: RelayPo
         }
     }
 
-    override suspend fun fetchBalance(): Result<Long> {
+    // NIP-47 `get_balance` is answered by the wallet service itself, so a zero
+    // here is a real zero — there's no unsynced state to represent and this
+    // never returns null.
+    override suspend fun fetchBalance(): Result<Long?> {
         emitStatus("Fetching balance...")
         val result = sendRequest(Nip47.NwcRequest.GetBalance)
         return result.map { response ->

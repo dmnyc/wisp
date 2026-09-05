@@ -46,7 +46,12 @@ import kotlinx.serialization.json.buildJsonObject
 sealed class WalletState {
     object NotConnected : WalletState()
     object Connecting : WalletState()
-    data class Connected(val balanceMsats: Long) : WalletState()
+    /**
+     * Connected. [balanceMsats] is null while the balance is still unknown —
+     * see [com.wisp.app.repo.WalletProvider.fetchBalance]. Null must render as
+     * a loading state, never as a zero balance.
+     */
+    data class Connected(val balanceMsats: Long?) : WalletState()
     data class Error(val message: String) : WalletState()
 }
 
@@ -916,7 +921,6 @@ class WalletViewModel(
                     result.fold(
                         onSuccess = { balanceMsats ->
                             _walletState.value = WalletState.Connected(balanceMsats)
-                    startDepositWatch()
                             startDepositWatch()
                         },
                         onFailure = { e ->
