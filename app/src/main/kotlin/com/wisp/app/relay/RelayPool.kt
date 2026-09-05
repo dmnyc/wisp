@@ -8,6 +8,7 @@ import com.wisp.app.repo.DiagnosticLogger
 import com.wisp.app.nostr.NostrEvent
 import com.wisp.app.nostr.RelayMessage
 import com.wisp.app.nostr.RelayMessage.Auth
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -28,6 +29,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 data class RelayEvent(val event: NostrEvent, val relayUrl: String, val subscriptionId: String)
 data class PublishResult(val relayUrl: String, val eventId: String, val accepted: Boolean, val message: String)
 data class BroadcastState(val accepted: Int, val sent: Int)
+data class PublishOutcome(val sentCount: Int, val confirmed: Boolean)
 
 class RelayPool(private val prefs: SharedPreferences? = null) {
     /** Incremented on every reconnectAll()/forceReconnectAll(). Allows SubscriptionManager
@@ -128,6 +130,7 @@ class RelayPool(private val prefs: SharedPreferences? = null) {
         const val COOLDOWN_NETWORK_MS = 5_000L           // 5s — DNS/network failures on persistent relays
         private const val UNSUPPORTED_THRESHOLD = 3      // Disconnect after N "unsupported" notices
         const val PREF_APPROVED_AUTH_RELAYS = "approved_auth_relays"
+        const val PUBLISH_OK_TIMEOUT_MS = 8000L
     }
 
     /** Tracks consecutive "unsupported message" NOTICEs per relay URL. */
@@ -690,6 +693,53 @@ class RelayPool(private val prefs: SharedPreferences? = null) {
             delay(1500)
             _broadcastState.value = null
         }
+    }
+
+    /**
+     * Runs [send] and waits for the first accepted NIP-20 OK for [eventId].
+     *
+     * The OK collector is started BEFORE [send] runs so a fast acknowledgment
+     * cannot be missed. While waiting it also drives [broadcastState] for the
+     * broadcast pill, replacing [trackPublish] for callers of this method.
+     */
+    suspend fun publishWithConfirmation(
+        eventId: String,
+        timeoutMs: Long = PUBLISH_OK_TIMEOUT_MS,
+        send: () -> Int
+    ): PublishOutcome {
+        val firstAccepted = CompletableDeferred<Unit>()
+        var accepted = 0
+        var sent = 0
+        val collector = scope.launch {
+            publishResults
+                .filter { it.eventId == eventId }
+                .collect { result ->
+                    if (result.accepted) {
+                        accepted++
+                        if (!firstAccepted.isCompleted) firstAccepted.complete(Unit)
+                    }
+                    _broadcastState.value = BroadcastState(accepted = accepted, sent = sent)
+                }
+        }
+        sent = send()
+        if (sent == 0) {
+            collector.cancel()
+            return PublishOutcome(0, false)
+        }
+        _broadcastState.value = BroadcastState(accepted = accepted, sent = sent)
+        val confirmed = withTimeoutOrNull(timeoutMs) {
+            firstAccepted.await()
+            true
+        } ?: false
+        // Keep counting straggler OKs for the pill briefly, then clear it
+        // (mirrors trackPublish's lifecycle).
+        scope.launch {
+            delay(4000)
+            collector.cancel()
+            delay(1500)
+            _broadcastState.value = null
+        }
+        return PublishOutcome(sent, confirmed)
     }
 
     fun sendToReadRelays(message: String) {

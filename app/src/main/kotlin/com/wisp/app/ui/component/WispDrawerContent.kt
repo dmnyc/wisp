@@ -41,6 +41,7 @@ import androidx.compose.material.icons.outlined.Hub
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Shield
+import androidx.compose.material.icons.outlined.TrackChanges
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.Visibility
@@ -100,6 +101,7 @@ fun WispDrawerContent(
     onSafety: () -> Unit = {},
     onPowSettings: () -> Unit = {},
     onCustomEmojis: () -> Unit = {},
+    onPaymentTargets: () -> Unit = {},
     onConsole: () -> Unit = {},
     onRelayHealth: () -> Unit = {},
     onRelaySettings: () -> Unit,
@@ -514,6 +516,13 @@ fun WispDrawerContent(
                     label = { Text(stringResource(R.string.drawer_custom_emojis)) },
                     selected = false,
                     onClick = onCustomEmojis,
+                    modifier = Modifier.height(48.dp).padding(start = 36.dp, end = 12.dp)
+                )
+                NavigationDrawerItem(
+                    icon = { Icon(Icons.Outlined.TrackChanges, contentDescription = null) },
+                    label = { Text(stringResource(R.string.drawer_payment_targets)) },
+                    selected = false,
+                    onClick = onPaymentTargets,
                     modifier = Modifier.height(48.dp).padding(start = 36.dp, end = 12.dp)
                 )
                 NavigationDrawerItem(

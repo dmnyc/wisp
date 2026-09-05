@@ -12,6 +12,7 @@ import com.wisp.app.nostr.Nip17
 import com.wisp.app.nostr.Nip53
 import com.wisp.app.nostr.Nip30
 import com.wisp.app.nostr.Nip51
+import com.wisp.app.nostr.NipA3
 import com.wisp.app.nostr.Nip57
 import com.wisp.app.nostr.Nip88
 import com.wisp.app.nostr.Nip65
@@ -41,6 +42,7 @@ import com.wisp.app.repo.GroupRepository
 import com.wisp.app.repo.LiveStreamRepository
 import com.wisp.app.repo.RelayHintStore
 import com.wisp.app.repo.RelayListRepository
+import com.wisp.app.repo.PaymentTargetRepository
 import com.wisp.app.repo.RelaySetRepository
 import com.wisp.app.repo.SigningMode
 import java.util.concurrent.ConcurrentHashMap
@@ -62,6 +64,7 @@ class EventRouter(
     private val blossomRepo: BlossomRepository,
     private val customEmojiRepo: CustomEmojiRepository,
     private val relayListRepo: RelayListRepository,
+    private val paymentTargetRepo: PaymentTargetRepository,
     private val interestRepo: InterestRepository,
     private val relaySetRepo: RelaySetRepository,
     private val relayScoreBoard: RelayScoreBoard,
@@ -390,6 +393,9 @@ class EventRouter(
                     keyRepo.saveDmRelays(urls)
                     relayPool.updateDmRelays(urls)
                 }
+            }
+            if (event.kind == NipA3.KIND) {
+                paymentTargetRepo.updateFromEvent(event)
             }
             if (event.kind == Nip51.KIND_SEARCH_RELAYS) {
                 val myPubkey = getUserPubkey()

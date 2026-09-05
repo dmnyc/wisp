@@ -122,6 +122,7 @@ fun DmConversationScreen(
     participants: List<String> = emptyList(),
     signer: NostrSigner? = null,
     socialActionManager: SocialActionManager? = null,
+    fetchPaymentTargets: (suspend (String) -> List<com.wisp.app.nostr.NipA3.PaymentTarget>)? = null,
     isWalletConnected: Boolean = false,
     onGoToWallet: () -> Unit = {},
     noteActions: com.wisp.app.ui.component.NoteActions? = null,
@@ -639,7 +640,11 @@ fun DmConversationScreen(
             onGoToWallet = {
                 zapTargetMessage = null
                 onGoToWallet()
-            }
+            },
+            recipientPubkey = zapTargetMessage?.senderPubkey,
+            recipientHasLud16 = zapTargetMessage?.senderPubkey
+                ?.let { pk -> eventRepo?.getProfileData(pk)?.let { !it.lud16.isNullOrBlank() } } ?: true,
+            fetchPaymentTargets = fetchPaymentTargets
         )
     }
 }

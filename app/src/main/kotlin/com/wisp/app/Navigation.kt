@@ -70,6 +70,7 @@ import com.wisp.app.ui.screen.UserProfileScreen
 import com.wisp.app.ui.screen.ConsoleScreen
 import com.wisp.app.ui.screen.RelayHealthScreen
 import com.wisp.app.ui.screen.CustomEmojiScreen
+import com.wisp.app.ui.screen.PaymentTargetsScreen
 import com.wisp.app.ui.screen.SearchScreen
 import com.wisp.app.ui.screen.SocialGraphScreen
 import com.wisp.app.ui.screen.BookmarkSetScreen
@@ -164,6 +165,7 @@ object Routes {
     const val ONBOARDING_FIRST_POST = "onboarding/first-post"
     const val RELAY_DETAIL = "relay_detail/{relayUrl}"
     const val CUSTOM_EMOJIS = "custom_emojis"
+    const val PAYMENT_TARGETS = "payment_targets"
     const val HASHTAG_FEED = "hashtag/{tag}"
     const val HASHTAG_SET_FEED = "hashtag_set/{name}/{tags}"
     const val EXISTING_USER_ONBOARDING = "onboarding/existing"
@@ -176,6 +178,17 @@ object Routes {
     const val ARTICLE = "article/{kind}/{author}/{dTag}"
     const val LIVE_STREAM = "live_stream/{hostPubkey}/{dTag}?relayHint={relayHint}"
 }
+
+/**
+ * True when the recipient's cached profile advertises a lightning address, or
+ * when the profile isn't cached yet — an unknown profile keeps the normal zap
+ * flow rather than pre-emptively falling back to payment targets.
+ */
+private fun zapRecipientHasLud16(
+    feedViewModel: com.wisp.app.viewmodel.FeedViewModel,
+    pubkey: String
+): Boolean =
+    feedViewModel.eventRepo.getProfileData(pubkey)?.let { !it.lud16.isNullOrBlank() } ?: true
 
 /**
  * Map a decoded NIP-19 entity to a navigation route, or null if there is no
@@ -218,6 +231,8 @@ fun WispNavHost(
                     feedViewModel.eventRepo,
                     feedViewModel.relayPool,
                     feedViewModel.keyRepo,
+                    paymentTargetRepo = feedViewModel.paymentTargetRepo,
+                    getSigner = { feedViewModel.signer },
                 ) as T
             }
         }
@@ -909,6 +924,9 @@ fun WispNavHost(
                 onCustomEmojis = {
                     navController.navigate(Routes.CUSTOM_EMOJIS)
                 },
+                onPaymentTargets = {
+                    navController.navigate(Routes.PAYMENT_TARGETS)
+                },
                 onConsole = {
                     navController.navigate(Routes.CONSOLE)
                 },
@@ -1103,7 +1121,8 @@ fun WispNavHost(
                     subManager = feedViewModel.subManager,
                     topRelayUrls = feedViewModel.getScoredRelays().take(5).map { it.url },
                     relayHintStore = feedViewModel.relayHintStore,
-                    extendedNetworkRepo = feedViewModel.extendedNetworkRepo
+                    extendedNetworkRepo = feedViewModel.extendedNetworkRepo,
+                    paymentTargetRepo = feedViewModel.paymentTargetRepo
                 )
             }
             val isBlockedState by feedViewModel.muteRepo.blockedPubkeys.collectAsState()
@@ -1161,6 +1180,7 @@ fun WispNavHost(
                 zapInProgressIds = profileZapInProgress,
                 canPrivateZap = feedViewModel.hasLocalKeypair && feedViewModel.relayPool.hasDmRelays() && feedViewModel.relayListRepo.hasDmRelays(pubkey),
                 fetchDmRelays = { pk -> feedViewModel.fetchDmRelaysIfMissing(pk) && feedViewModel.relayPool.hasDmRelays() },
+                fetchPaymentTargets = feedViewModel::fetchPaymentTargets,
                 ownLists = feedViewModel.listRepo.ownLists.collectAsState().value,
                 onAddToList = { dTag, pk -> feedViewModel.addToList(dTag, pk) },
                 onRemoveFromList = { dTag, pk -> feedViewModel.removeFromList(dTag, pk) },
@@ -1271,7 +1291,10 @@ fun WispNavHost(
                         feedViewModel.sendZap(event, amountMsats, message, isAnonymous, isPrivate)
                     },
                     onGoToWallet = { navController.navigate(Routes.WALLET) },
-                    canPrivateZap = feedViewModel.hasLocalKeypair && userHasDmRelays && recipientHasDmRelays
+                    canPrivateZap = feedViewModel.hasLocalKeypair && userHasDmRelays && recipientHasDmRelays,
+                    recipientPubkey = searchZapTarget?.pubkey,
+                    recipientHasLud16 = searchZapTarget?.pubkey?.let { zapRecipientHasLud16(feedViewModel, it) } ?: true,
+                    fetchPaymentTargets = feedViewModel::fetchPaymentTargets
                 )
             }
             SearchScreen(
@@ -1430,6 +1453,7 @@ fun WispNavHost(
                 peerPubkey = pubkey,
                 signer = activeSigner,
                 socialActionManager = feedViewModel.socialActions,
+                fetchPaymentTargets = feedViewModel::fetchPaymentTargets,
                 isWalletConnected = feedViewModel.activeWalletProvider.hasConnection(),
                 onGoToWallet = { navController.navigate(Routes.WALLET) },
                 noteActions = remember {
@@ -1517,6 +1541,7 @@ fun WispNavHost(
                 participants = participantList,
                 signer = activeSigner,
                 socialActionManager = feedViewModel.socialActions,
+                fetchPaymentTargets = feedViewModel::fetchPaymentTargets,
                 isWalletConnected = feedViewModel.activeWalletProvider.hasConnection(),
                 onGoToWallet = { navController.navigate(Routes.WALLET) },
                 noteActions = remember {
@@ -1641,7 +1666,10 @@ fun WispNavHost(
                     },
                     onGoToWallet = { navController.navigate(Routes.WALLET) },
                     canPrivateZap = feedViewModel.hasLocalKeypair && feedViewModel.relayPool.hasDmRelays() && recipientHasDmRelays,
-                    initialSatsHint = groupRoomZapInitialSats
+                    initialSatsHint = groupRoomZapInitialSats,
+                    recipientPubkey = groupRoomZapTarget?.pubkey,
+                    recipientHasLud16 = groupRoomZapTarget?.pubkey?.let { zapRecipientHasLud16(feedViewModel, it) } ?: true,
+                    fetchPaymentTargets = feedViewModel::fetchPaymentTargets
                 )
             }
             val groupRoomMediaLauncher = rememberLauncherForActivityResult(
@@ -1918,7 +1946,10 @@ fun WispNavHost(
                     },
                     onGoToWallet = { navController.navigate(Routes.WALLET) },
                     canPrivateZap = feedViewModel.hasLocalKeypair && threadUserHasDmRelays && threadRecipientHasDmRelays,
-                    forcePrivate = threadZapTarget?.id?.let { feedViewModel.eventRepo.isPrivate(it) } == true
+                    forcePrivate = threadZapTarget?.id?.let { feedViewModel.eventRepo.isPrivate(it) } == true,
+                    recipientPubkey = threadZapTarget?.pubkey,
+                    recipientHasLud16 = threadZapTarget?.pubkey?.let { zapRecipientHasLud16(feedViewModel, it) } ?: true,
+                    fetchPaymentTargets = feedViewModel::fetchPaymentTargets
                 )
             }
             val threadSetListedIds by feedViewModel.bookmarkSetRepo.allListedEventIds.collectAsState()
@@ -2088,7 +2119,10 @@ fun WispNavHost(
                         feedViewModel.sendZap(event, amountMsats, message, isAnonymous, isPrivate)
                     },
                     onGoToWallet = { navController.navigate(Routes.WALLET) },
-                    canPrivateZap = feedViewModel.hasLocalKeypair && hashtagUserHasDmRelays && hashtagRecipientHasDmRelays
+                    canPrivateZap = feedViewModel.hasLocalKeypair && hashtagUserHasDmRelays && hashtagRecipientHasDmRelays,
+                    recipientPubkey = hashtagZapTarget?.pubkey,
+                    recipientHasLud16 = hashtagZapTarget?.pubkey?.let { zapRecipientHasLud16(feedViewModel, it) } ?: true,
+                    fetchPaymentTargets = feedViewModel::fetchPaymentTargets
                 )
             }
 
@@ -2240,7 +2274,10 @@ fun WispNavHost(
                         feedViewModel.sendZap(event, amountMsats, message, isAnonymous, isPrivate)
                     },
                     onGoToWallet = { navController.navigate(Routes.WALLET) },
-                    canPrivateZap = feedViewModel.hasLocalKeypair && setFeedUserHasDmRelays && setFeedRecipientHasDmRelays
+                    canPrivateZap = feedViewModel.hasLocalKeypair && setFeedUserHasDmRelays && setFeedRecipientHasDmRelays,
+                    recipientPubkey = setFeedZapTarget?.pubkey,
+                    recipientHasLud16 = setFeedZapTarget?.pubkey?.let { zapRecipientHasLud16(feedViewModel, it) } ?: true,
+                    fetchPaymentTargets = feedViewModel::fetchPaymentTargets
                 )
             }
 
@@ -2405,7 +2442,10 @@ fun WispNavHost(
                         feedViewModel.sendZap(event, amountMsats, message, isAnonymous, isPrivate)
                     },
                     onGoToWallet = { navController.navigate(Routes.WALLET) },
-                    canPrivateZap = feedViewModel.hasLocalKeypair && articleUserHasDmRelays && articleRecipientHasDmRelays
+                    canPrivateZap = feedViewModel.hasLocalKeypair && articleUserHasDmRelays && articleRecipientHasDmRelays,
+                    recipientPubkey = articleZapTarget?.pubkey,
+                    recipientHasLud16 = articleZapTarget?.pubkey?.let { zapRecipientHasLud16(feedViewModel, it) } ?: true,
+                    fetchPaymentTargets = feedViewModel::fetchPaymentTargets
                 )
             }
 
@@ -2612,7 +2652,12 @@ fun WispNavHost(
                     // DIP-03 needs a concrete note id for the ephemeral key
                     // derivation; live-stream zaps target an addressable event
                     // (a-tag) instead, so private zaps don't apply here.
-                    canPrivateZap = false
+                    canPrivateZap = false,
+                    // The stream host (override) is the payee, not the note author.
+                    recipientPubkey = liveZapRecipientOverride ?: liveZapTarget?.pubkey,
+                    recipientHasLud16 = (liveZapRecipientOverride ?: liveZapTarget?.pubkey)
+                        ?.let { zapRecipientHasLud16(feedViewModel, it) } ?: true,
+                    fetchPaymentTargets = feedViewModel::fetchPaymentTargets
                 )
             }
             val streamActivityEventId = remember(hostPubkey, dTag) {
@@ -2699,6 +2744,24 @@ fun WispNavHost(
                 interfacePrefs = interfacePrefs,
                 onBack = { navController.popBackStack() },
                 onChanged = onInterfaceChanged
+            )
+        }
+
+        composable(Routes.PAYMENT_TARGETS) {
+            // State stays on WalletViewModel (already app-scoped above) so the
+            // publish path is unchanged; only the entry point lives in Settings.
+            PaymentTargetsScreen(
+                targets = walletViewModel.paymentTargets.collectAsState().value,
+                isLoading = walletViewModel.paymentTargetsLoading.collectAsState().value,
+                error = walletViewModel.paymentTargetsError.collectAsState().value,
+                isDirty = walletViewModel.paymentTargetsDirty.collectAsState().value,
+                onLoad = { walletViewModel.loadPaymentTargets() },
+                onAdd = { type, authority -> walletViewModel.addPaymentTarget(type, authority) },
+                onRemove = { walletViewModel.removePaymentTarget(it) },
+                onSave = { walletViewModel.publishPaymentTargets() },
+                onBack = { navController.popBackStack() },
+                profileLightningAddress = feedViewModel.getUserPubkey()
+                    ?.let { feedViewModel.profileRepo.get(it)?.lud16 }
             )
         }
 
@@ -3175,7 +3238,10 @@ fun WispNavHost(
                     },
                     onGoToWallet = { navController.navigate(Routes.WALLET) },
                     canPrivateZap = feedViewModel.hasLocalKeypair && notifUserHasDmRelays && notifRecipientHasDmRelays,
-                    forcePrivate = notifZapTarget?.id?.let { feedViewModel.eventRepo.isPrivate(it) } == true
+                    forcePrivate = notifZapTarget?.id?.let { feedViewModel.eventRepo.isPrivate(it) } == true,
+                    recipientPubkey = notifZapTarget?.pubkey,
+                    recipientHasLud16 = notifZapTarget?.pubkey?.let { zapRecipientHasLud16(feedViewModel, it) } ?: true,
+                    fetchPaymentTargets = feedViewModel::fetchPaymentTargets
                 )
             }
 
@@ -3193,7 +3259,11 @@ fun WispNavHost(
                             rumorId = target.rumorId.ifEmpty { null }
                         )
                     },
-                    onGoToWallet = { navController.navigate(Routes.WALLET) }
+                    onGoToWallet = { navController.navigate(Routes.WALLET) },
+                    recipientPubkey = notifDmZapTarget?.senderPubkey,
+                    recipientHasLud16 = notifDmZapTarget?.senderPubkey
+                        ?.let { zapRecipientHasLud16(feedViewModel, it) } ?: true,
+                    fetchPaymentTargets = feedViewModel::fetchPaymentTargets
                 )
             }
 

@@ -175,6 +175,7 @@ fun FeedScreen(
     onSocialGraph: () -> Unit = {},
     onSafety: () -> Unit = {},
     onCustomEmojis: () -> Unit = {},
+    onPaymentTargets: () -> Unit = {},
     onConsole: () -> Unit = {},
     onRelayHealth: () -> Unit = {},
     onKeys: () -> Unit = {},
@@ -544,7 +545,12 @@ fun FeedScreen(
                 viewModel.sendZap(event, amountMsats, message, isAnonymous, isPrivate)
             },
             onGoToWallet = onWallet,
-            canPrivateZap = userHasDmRelays && recipientHasDmRelays
+            canPrivateZap = userHasDmRelays && recipientHasDmRelays,
+            recipientPubkey = zapTargetEvent?.pubkey,
+            recipientHasLud16 = zapTargetEvent?.pubkey?.let { pk ->
+                viewModel.eventRepo.getProfileData(pk)?.let { !it.lud16.isNullOrBlank() }
+            } ?: true,
+            fetchPaymentTargets = viewModel::fetchPaymentTargets
         )
     }
 
@@ -704,6 +710,10 @@ fun FeedScreen(
                 onCustomEmojis = {
                     scope.launch { drawerState.close() }
                     onCustomEmojis()
+                },
+                onPaymentTargets = {
+                    scope.launch { drawerState.close() }
+                    onPaymentTargets()
                 },
                 onKeys = {
                     scope.launch { drawerState.close() }

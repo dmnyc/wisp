@@ -7,6 +7,7 @@ import com.wisp.app.nostr.ClientMessage
 import com.wisp.app.nostr.Filter
 import com.wisp.app.nostr.LocalSigner
 import com.wisp.app.nostr.Nip57
+import com.wisp.app.nostr.NipA3
 import com.wisp.app.nostr.Nip78
 import com.wisp.app.nostr.NostrEvent
 import com.wisp.app.nostr.NostrSigner
@@ -17,6 +18,7 @@ import com.wisp.app.repo.EventRepository
 import com.wisp.app.repo.KeyRepository
 import com.wisp.app.repo.BalanceUnit
 import com.wisp.app.repo.NwcRepository
+import com.wisp.app.repo.PaymentTargetRepository
 import com.wisp.app.repo.SparkRepository
 import com.wisp.app.repo.WalletMode
 import com.wisp.app.repo.WalletModeRepository
@@ -24,6 +26,7 @@ import com.wisp.app.repo.WalletProvider
 import android.util.Log
 import com.wisp.app.repo.WalletTransaction
 import com.wisp.app.repo.ZapSender
+import com.wisp.app.relay.RelayConfig
 import com.wisp.app.relay.RelayPool
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -125,6 +128,8 @@ class WalletViewModel(
     val eventRepo: EventRepository,
     val relayPool: RelayPool,
     val keyRepo: KeyRepository,
+    private val paymentTargetRepo: PaymentTargetRepository? = null,
+    private val getSigner: () -> NostrSigner? = { null },
 ) : ViewModel() {
 
     private val _walletMode = MutableStateFlow(walletModeRepo.getMode())
@@ -1389,6 +1394,135 @@ class WalletViewModel(
     private fun stopSyncPolling() {
         syncPollJob?.cancel()
         syncPollJob = null
+    }
+
+    // --- NIP-A3 payment targets ---
+
+    private val _paymentTargets = MutableStateFlow<List<NipA3.PaymentTarget>>(emptyList())
+    val paymentTargets: StateFlow<List<NipA3.PaymentTarget>> = _paymentTargets
+
+    private val _paymentTargetsLoading = MutableStateFlow(false)
+    val paymentTargetsLoading: StateFlow<Boolean> = _paymentTargetsLoading
+
+    private val _paymentTargetsError = MutableStateFlow<String?>(null)
+    val paymentTargetsError: StateFlow<String?> = _paymentTargetsError
+
+    private val _paymentTargetsDirty = MutableStateFlow(false)
+    val paymentTargetsDirty: StateFlow<Boolean> = _paymentTargetsDirty
+
+    /**
+     * Seed from the local cache, then read back the newest kind 10133 from the
+     * network before editing — it's a replaceable event, so saving on top of a
+     * stale copy would clobber targets added from another client.
+     */
+    fun loadPaymentTargets() {
+        val repo = paymentTargetRepo ?: return
+        val me = keyRepo.getPubkeyHex() ?: return
+        _paymentTargetsError.value = null
+        _paymentTargetsDirty.value = false
+        _paymentTargets.value = repo.getTargets(me) ?: emptyList()
+        _paymentTargetsLoading.value = true
+        viewModelScope.launch {
+            try {
+                val subId = "own-paytgt"
+                val filter = Filter(kinds = listOf(NipA3.KIND), authors = listOf(me), limit = 1)
+                val reqMsg = ClientMessage.req(subId, filter)
+                for (url in RelayConfig.DEFAULT_INDEXER_RELAYS) {
+                    relayPool.sendToRelayOrEphemeral(url, reqMsg, skipBadCheck = true)
+                }
+                relayPool.sendToAll(reqMsg)
+
+                val result = withTimeoutOrNull(4000L) {
+                    relayPool.relayEvents.first {
+                        it.subscriptionId == subId && it.event.kind == NipA3.KIND && it.event.pubkey == me
+                    }
+                }
+
+                val closeMsg = ClientMessage.close(subId)
+                for (url in RelayConfig.DEFAULT_INDEXER_RELAYS) {
+                    relayPool.sendToRelay(url, closeMsg)
+                }
+                relayPool.sendToAll(closeMsg)
+
+                if (result != null) {
+                    repo.updateFromEvent(result.event)
+                    if (!_paymentTargetsDirty.value) {
+                        _paymentTargets.value = repo.getTargets(me) ?: emptyList()
+                    }
+                }
+            } finally {
+                _paymentTargetsLoading.value = false
+            }
+        }
+    }
+
+    fun addPaymentTarget(typeRaw: String, authority: String): Boolean {
+        val type = NipA3.normalizeType(typeRaw)
+        if (type == null) {
+            _paymentTargetsError.value = "Type may only contain a-z, 0-9 and hyphens"
+            return false
+        }
+        val trimmedAuthority = authority.trim()
+        if (!NipA3.isValidAuthority(trimmedAuthority)) {
+            _paymentTargetsError.value = "Enter a valid address"
+            return false
+        }
+        if (type == "lightning" && !NipA3.isReusableLightningTarget(trimmedAuthority)) {
+            _paymentTargetsError.value =
+                "Enter a Lightning address like you@example.com \u2014 invoices and LNURL expire or aren't reusable."
+            return false
+        }
+        // One address per type: replacing an address means removing the existing
+        // entry first, so a stale address can never linger alongside its successor.
+        if (_paymentTargets.value.any { it.type == type }) {
+            _paymentTargetsError.value =
+                "You already have a ${NipA3.displayName(type)} address. Remove it before adding another."
+            return false
+        }
+        val target = NipA3.PaymentTarget(type, trimmedAuthority)
+        _paymentTargetsError.value = null
+        _paymentTargets.value = _paymentTargets.value + target
+        _paymentTargetsDirty.value = true
+        return true
+    }
+
+    fun removePaymentTarget(target: NipA3.PaymentTarget) {
+        _paymentTargets.value = _paymentTargets.value - target
+        _paymentTargetsDirty.value = true
+    }
+
+    /**
+     * Signs and publishes the kind 10133 event. Suspends until at least one relay
+     * returns a NIP-20 OK, so the caller can report a truthful result.
+     */
+    suspend fun publishPaymentTargets(): Boolean {
+        val s = getSigner() ?: buildSigner() ?: return false
+        return try {
+            val event = s.signEvent(
+                kind = NipA3.KIND,
+                content = "",
+                tags = NipA3.buildTags(_paymentTargets.value)
+            )
+            val msg = ClientMessage.event(event)
+            val outcome = relayPool.publishWithConfirmation(event.id) {
+                relayPool.sendToWriteRelays(msg)
+            }
+            for (url in RelayConfig.DEFAULT_INDEXER_RELAYS) {
+                relayPool.sendToRelayOrEphemeral(url, msg)
+            }
+            if (outcome.confirmed) {
+                paymentTargetRepo?.updateFromEvent(event)
+                _paymentTargetsDirty.value = false
+                _paymentTargetsError.value = null
+                true
+            } else {
+                _paymentTargetsError.value = "No relay confirmed the update. Try again."
+                false
+            }
+        } catch (_: Exception) {
+            _paymentTargetsError.value = "Could not publish payment targets."
+            false
+        }
     }
 
     // --- Relay Backup / Restore ---

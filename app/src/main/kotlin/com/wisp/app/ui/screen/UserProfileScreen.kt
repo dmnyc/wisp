@@ -53,6 +53,8 @@ import androidx.compose.material.icons.outlined.CurrencyBitcoin
 import com.wisp.app.nostr.Nip30
 import com.wisp.app.nostr.toNpub
 import com.wisp.app.ui.component.Nip05Badge
+import com.wisp.app.ui.component.PaymentTargetGlyph
+import com.wisp.app.ui.component.PaymentTargetSheet
 import com.wisp.app.ui.component.RichContent
 import com.wisp.app.ui.component.parseImetaTags
 import androidx.compose.material3.CircularProgressIndicator
@@ -99,6 +101,7 @@ import com.wisp.app.R
 import com.wisp.app.nostr.FollowSet
 import com.wisp.app.nostr.Nip02
 import com.wisp.app.nostr.Nip69
+import com.wisp.app.nostr.NipA3
 import com.wisp.app.nostr.NostrEvent
 import com.wisp.app.nostr.ProfileData
 import com.wisp.app.relay.RelayConfig
@@ -171,6 +174,7 @@ fun UserProfileScreen(
     zapInProgressIds: Set<String> = emptySet(),
     canPrivateZap: Boolean = false,
     fetchDmRelays: (suspend (String) -> Boolean)? = null,
+    fetchPaymentTargets: (suspend (String) -> List<NipA3.PaymentTarget>)? = null,
     ownLists: List<FollowSet> = emptyList(),
     onAddToList: ((String, String) -> Unit)? = null,
     onRemoveFromList: ((String, String) -> Unit)? = null,
@@ -249,6 +253,12 @@ fun UserProfileScreen(
     var zapAnimatingIds by remember { mutableStateOf(emptySet<String>()) }
     var zapErrorMessage by remember { mutableStateOf<String?>(null) }
 
+    val paymentTargets by viewModel.paymentTargets.collectAsState()
+    var paymentTargetSheetTarget by remember { mutableStateOf<NipA3.PaymentTarget?>(null) }
+    paymentTargetSheetTarget?.let { target ->
+        PaymentTargetSheet(target = target) { paymentTargetSheetTarget = null }
+    }
+
     var showProfileZapDialog by remember { mutableStateOf(false) }
     var profileZapStatus by remember { mutableStateOf<ProfileZapStatus>(ProfileZapStatus.Idle) }
 
@@ -293,7 +303,12 @@ fun UserProfileScreen(
                 onZap(event, amountMsats, message, isAnonymous, isPrivate)
             },
             onGoToWallet = onWallet,
-            canPrivateZap = resolvedCanPrivateZap
+            canPrivateZap = resolvedCanPrivateZap,
+            recipientPubkey = zapTargetEvent?.pubkey,
+            recipientHasLud16 = zapTargetEvent?.pubkey?.let { pk ->
+                eventRepo?.getProfileData(pk)?.let { !it.lud16.isNullOrBlank() }
+            } ?: true,
+            fetchPaymentTargets = fetchPaymentTargets
         )
     }
 
@@ -307,7 +322,11 @@ fun UserProfileScreen(
                 onZapProfile?.invoke(amountMsats, message, isAnonymous)
             },
             onGoToWallet = onWallet,
-            canPrivateZap = false
+            canPrivateZap = false,
+            // Profile zap — the recipient is the profile being viewed.
+            recipientPubkey = profile?.pubkey ?: profilePubkey.ifEmpty { null },
+            recipientHasLud16 = profile?.let { !it.lud16.isNullOrBlank() } ?: true,
+            fetchPaymentTargets = fetchPaymentTargets
         )
     }
 
@@ -638,7 +657,9 @@ fun UserProfileScreen(
                     isBlocked = isBlocked,
                     onMuteUser = onMuteUser,
                     onUnmuteUser = onUnblockUser,
-                    sortContent = sortButtonContent
+                    sortContent = sortButtonContent,
+                    paymentTargets = paymentTargets,
+                    onPaymentTargetClick = { paymentTargetSheetTarget = it }
                 )
             }
 
@@ -1277,7 +1298,9 @@ private fun ProfileHeader(
     isBlocked: Boolean = false,
     onMuteUser: (() -> Unit)? = null,
     onUnmuteUser: (() -> Unit)? = null,
-    sortContent: (@Composable RowScope.() -> Unit)? = null
+    sortContent: (@Composable RowScope.() -> Unit)? = null,
+    paymentTargets: List<NipA3.PaymentTarget> = emptyList(),
+    onPaymentTargetClick: (NipA3.PaymentTarget) -> Unit = {}
 ) {
     var fullScreenImageUrl by remember { mutableStateOf<String?>(null) }
     val canSign = LocalCanSign.current
@@ -1538,6 +1561,81 @@ private fun ProfileHeader(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+        }
+
+        // NIP-A3 payment targets (kind 10133). Lightning keeps a full-width row
+        // so its address can be shown inline — it's short and human-readable,
+        // unlike a 95-char Monero string. Tapping any row opens the pay sheet
+        // (QR + copy + open-in-wallet).
+        val (lightningTargets, gridTargets) = paymentTargets.partition {
+            it.type.equals("lightning", ignoreCase = true)
+        }
+
+        lightningTargets.forEach { target ->
+            Spacer(Modifier.height(6.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onPaymentTargetClick(target) }
+                    .padding(vertical = 4.dp)
+            ) {
+                PaymentTargetGlyph(
+                    type = target.type,
+                    size = 16.dp,
+                    tint = Color(0xFFFFC107)
+                )
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    text = NipA3.displayName(target.type),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = target.authority,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+
+        // Remaining targets in 3 columns — icon + name only; the raw address is
+        // shown and copyable in the sheet that opens on tap.
+        if (gridTargets.isNotEmpty()) Spacer(Modifier.height(4.dp))
+        gridTargets.chunked(3).forEach { rowTargets ->
+            Row(modifier = Modifier.fillMaxWidth()) {
+                rowTargets.forEach { target ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { onPaymentTargetClick(target) }
+                            .padding(vertical = 6.dp, horizontal = 2.dp)
+                    ) {
+                        PaymentTargetGlyph(
+                            type = target.type,
+                            size = 16.dp,
+                            tint = Color(0xFFFFC107)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = NipA3.displayName(target.type),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+                // Keep column widths stable when the last row is short.
+                repeat(3 - rowTargets.size) { Spacer(Modifier.weight(1f)) }
             }
         }
 
