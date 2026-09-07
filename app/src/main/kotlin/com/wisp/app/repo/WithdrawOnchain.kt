@@ -43,22 +43,6 @@ data class WithdrawOnchainQuote(
 }
 
 /**
- * Funds a withdrawal cannot move, reported after the fact.
- *
- * "Recover everything" is not literally achievable: tokens below the
- * provider's conversion floor cannot be converted at any price, and Spark
- * leaves worth less than their own exit cost are not worth spending. Naming
- * the remainder is more useful than implying it does not exist.
- */
-data class WithdrawOnchainRemainder(
-    /** Ticker to human-readable amount left behind, e.g. "USDB" to "0.34". */
-    val strandedTokens: Map<String, String> = emptyMap(),
-    val strandedSats: Long = 0L
-) {
-    val isEmpty: Boolean get() = strandedTokens.isEmpty() && strandedSats == 0L
-}
-
-/**
  * Pull a bare address out of whatever a wallet's QR actually encodes.
  *
  * Bitcoin QRs are usually BIP-21 URIs - "bitcoin:bc1q...?amount=0.01&label=x"

@@ -73,29 +73,11 @@ class WithdrawOnchainTest {
     }
 
     @Test
-    fun `every speed is labelled and explained`() {
+    fun `every speed is labeled and explained`() {
         WithdrawOnchainSpeed.entries.forEach {
             assertTrue(it.label.isNotEmpty())
             assertTrue(it.detail.isNotEmpty())
         }
-    }
-
-    // ---- Remainder ----
-
-    @Test
-    fun `nothing stranded is empty`() {
-        assertTrue(WithdrawOnchainRemainder().isEmpty)
-    }
-
-    /** Tokens under the conversion floor can't move at any price. */
-    @Test
-    fun `stranded tokens are not empty`() {
-        assertFalse(WithdrawOnchainRemainder(strandedTokens = mapOf("USDB" to "0.34")).isEmpty)
-    }
-
-    @Test
-    fun `stranded sats are not empty`() {
-        assertFalse(WithdrawOnchainRemainder(strandedSats = 120).isEmpty)
     }
 
     // ---- BIP-21 normalization ----

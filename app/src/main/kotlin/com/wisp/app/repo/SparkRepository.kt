@@ -540,25 +540,29 @@ class SparkRepository(
             WithdrawOnchainSpeed.FAST -> OnchainConfirmationSpeed.FAST
         }
 
-        suspend fun send(prepared: PrepareSendPaymentResponse) = instance.sendPayment(
-            SendPaymentRequest(
-                prepareResponse = prepared,
-                options = SendPaymentOptions.BitcoinAddress(confirmationSpeed = sdkSpeed)
+        // Broadcast and judge the outcome in one place. A FAILED payment comes
+        // back WITHOUT throwing - the same trap payInvoice documents - so the
+        // status is inspected, not trusted. Shared by the initial send and the
+        // post-consolidation retry so the check and its copy can't drift.
+        suspend fun sendAndCheck(prepared: PrepareSendPaymentResponse): Result<String> {
+            val response = instance.sendPayment(
+                SendPaymentRequest(
+                    prepareResponse = prepared,
+                    options = SendPaymentOptions.BitcoinAddress(confirmationSpeed = sdkSpeed)
+                )
             )
-        )
-
-        try {
-            emitStatus("Sending on-chain...")
-            val response = send(held.second)
-            // A FAILED payment comes back WITHOUT throwing - the same trap
-            // payInvoice documents - so the status is inspected, not trusted.
             if (response.payment.status == PaymentStatus.FAILED) {
                 emitStatus("Withdrawal failed")
-                return@withContext Result.failure(
+                return Result.failure(
                     Exception("The withdrawal failed - your funds were not sent.")
                 )
             }
-            Result.success(response.payment.id)
+            return Result.success(response.payment.id)
+        }
+
+        try {
+            emitStatus("Sending on-chain...")
+            return@withContext sendAndCheck(held.second)
         } catch (e: Exception) {
             if (e.message?.contains("insufficient funds", ignoreCase = true) != true) {
                 emitStatus("Withdrawal failed")
@@ -572,22 +576,31 @@ class SparkRepository(
             // and the old prepare response references an arrangement of
             // leaves that no longer exists.
             val requote = prepareWithdrawOnchain(quote.address, quote.speed)
-            val reprepared = preparedWithdrawal?.second
-            if (requote.isFailure || reprepared == null) {
+            val rehead = preparedWithdrawal
+            if (requote.isFailure || rehead == null) {
                 return@withContext Result.failure(
                     requote.exceptionOrNull()
                         ?: Exception("Couldn't re-quote the withdrawal after consolidating.")
                 )
             }
+            // The same invariant the primary path enforces above: only ever
+            // broadcast terms the user actually approved. Consolidating can
+            // move the spendable balance and the fee, and the confirm screen
+            // still shows the figure that was signed off - sending the new one
+            // would spend an amount nobody agreed to. Bounce back for a fresh
+            // confirmation instead.
+            if (rehead.first != quote) {
+                emitStatus("Amount changed - confirm again")
+                return@withContext Result.failure(
+                    Exception(
+                        "The amount changed while consolidating your funds. " +
+                            "Check the new total and confirm again."
+                    )
+                )
+            }
             try {
                 emitStatus("Retrying on-chain send...")
-                val response = send(reprepared)
-                if (response.payment.status == PaymentStatus.FAILED) {
-                    return@withContext Result.failure(
-                        Exception("The withdrawal failed - your funds were not sent.")
-                    )
-                }
-                Result.success(response.payment.id)
+                sendAndCheck(rehead.second)
             } catch (retry: Exception) {
                 emitStatus("Withdrawal failed")
                 Result.failure(retry)
