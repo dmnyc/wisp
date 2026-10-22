@@ -21,7 +21,6 @@ import androidx.compose.foundation.content.TransferableContent
 import androidx.compose.foundation.content.consume
 import androidx.compose.foundation.content.contentReceiver
 import androidx.compose.foundation.content.hasMediaType
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Box
@@ -84,7 +83,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -684,7 +682,6 @@ fun ComposeScreen(
 
                     // Text field with GIF keyboard support via BasicTextField(TextFieldState)
                     val textFieldState = remember { TextFieldState(content.text) }
-                    val interactionSource = remember { MutableInteractionSource() }
                     val enabled = !publishing && countdownSeconds == null
 
                     // Sync ViewModel -> TextFieldState (for programmatic updates: upload URL, mention select, etc.)
@@ -739,15 +736,20 @@ fun ComposeScreen(
                             color = MaterialTheme.colorScheme.onSurface
                         ),
                         decorator = { innerTextField ->
-                            OutlinedTextFieldDefaults.DecorationBox(
-                                value = textFieldState.text.toString(),
-                                innerTextField = innerTextField,
-                                enabled = enabled,
-                                singleLine = false,
-                                visualTransformation = androidx.compose.ui.text.input.VisualTransformation.None,
-                                interactionSource = interactionSource,
-                                placeholder = { Text(stringResource(R.string.compose_placeholder)) }
-                            )
+                            // Borderless entry field (iOS parity): no outline
+                            // box — just the placeholder when empty, flush with
+                            // the composer's other content. (The M3 DecorationBox
+                            // can't drop its outline before material3 1.4.)
+                            Box(modifier = Modifier.fillMaxWidth()) {
+                                if (textFieldState.text.isEmpty()) {
+                                    Text(
+                                        stringResource(R.string.compose_placeholder),
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                innerTextField()
+                            }
                         }
                     )
 
