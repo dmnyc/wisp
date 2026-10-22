@@ -64,11 +64,11 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.BarChart
-import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.Schedule
-import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.Tag
 import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.material3.Button
@@ -132,6 +132,7 @@ import com.wisp.app.repo.MentionCandidate
 import com.wisp.app.repo.ProfileRepository
 import com.wisp.app.repo.PowPreferences
 import com.wisp.app.R
+import com.wisp.app.ui.component.ComposerMoreSheet
 import com.wisp.app.ui.component.EmojiShortcodePopup
 import com.wisp.app.ui.component.EmojiVisualTransformation
 import com.wisp.app.ui.component.MentionOutputTransformation
@@ -139,7 +140,6 @@ import com.wisp.app.ui.component.ProfilePicture
 import com.wisp.app.ui.component.RichContent
 import com.wisp.app.ui.component.detectEmojiAutocomplete
 import com.wisp.app.ui.component.insertEmojiShortcode
-import com.wisp.app.ui.theme.WispThemeColors
 import com.wisp.app.viewmodel.ComposeViewModel
 import com.wisp.app.viewmodel.PowManager
 import com.wisp.app.viewmodel.PowStatus
@@ -204,6 +204,9 @@ fun ComposeScreen(
     var showDatePicker by remember { mutableStateOf(false) }
     var showTimePicker by remember { mutableStateOf(false) }
     var pendingDateMillis by remember { mutableStateOf<Long?>(null) }
+    // Secondary panel: NSFW / PoW / schedule / private reply / draft live here
+    // instead of crowding the attach row (composer redesign, Oct 2026).
+    var showMoreSheet by remember { mutableStateOf(false) }
 
     val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
 
@@ -371,58 +374,40 @@ fun ComposeScreen(
                         maxLines = 8
                     )
 
-                    // Toolbar row: NSFW, PoW, Schedule only
+                    // Toolbar row, slimmed (composer redesign, Oct 2026): the
+                    // media picker stays inline; NSFW / PoW / schedule moved
+                    // into the More sheet.
                     Spacer(Modifier.height(4.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        IconButton(onClick = {
-                            val nextState = !explicit
-                            viewModel.toggleExplicit()
-                            android.widget.Toast.makeText(context, "NSFW ${if (nextState) "ON" else "OFF"}", android.widget.Toast.LENGTH_SHORT).show()
-                        }) {
-                            Icon(
-                                Icons.Outlined.Warning,
-                                contentDescription = "Mark as explicit",
-                                tint = if (explicit) MaterialTheme.colorScheme.error
-                                       else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-
-                        IconButton(onClick = {
-                            val prefs = powPrefs
-                            if (prefs != null) {
-                                val nextState = !powEnabled
-                                viewModel.togglePow(prefs)
-                                android.widget.Toast.makeText(context, "Mining ${if (nextState) "ON" else "OFF"}", android.widget.Toast.LENGTH_SHORT).show()
-                            }
-                        }) {
-                            Icon(
-                                Icons.Outlined.Shield,
-                                contentDescription = "Proof of Work",
-                                tint = if (powEnabled) WispThemeColors.zapColor
-                                       else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-
-                        IconButton(onClick = {
-                            if (scheduleEnabled) {
-                                viewModel.toggleSchedule()
-                            } else {
-                                viewModel.toggleSchedule()
-                                showDatePicker = true
-                            }
-                        }) {
-                            Icon(
-                                Icons.Outlined.Schedule,
-                                contentDescription = "Schedule post",
-                                tint = if (scheduleEnabled) MaterialTheme.colorScheme.primary
-                                       else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                        IconButton(
+                            onClick = {
+                                photoPickerLauncher.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
+                                )
+                            },
+                            enabled = uploadProgress == null && countdownSeconds == null
+                        ) {
+                            Icon(Icons.Outlined.Image, contentDescription = "Attach media")
                         }
 
                         Spacer(Modifier.weight(1f))
+
+                        Box(contentAlignment = Alignment.TopEnd) {
+                            IconButton(onClick = { showMoreSheet = true }) {
+                                Icon(Icons.Outlined.MoreHoriz, contentDescription = "More options")
+                            }
+                            if (explicit || powEnabled || scheduleEnabled) {
+                                Box(
+                                    modifier = Modifier
+                                        .padding(top = 10.dp, end = 10.dp)
+                                        .size(8.dp)
+                                        .background(MaterialTheme.colorScheme.primary, CircleShape)
+                                )
+                            }
+                        }
                     }
 
                     // NSFW feedback banner
@@ -766,7 +751,10 @@ fun ComposeScreen(
                         }
                     )
 
-                    // Attach row with preview toggle
+                    // Attach row, slimmed (composer redesign, Oct 2026): only
+                    // what a standard social client offers inline stays here —
+                    // media and poll; everything else overflows into the More
+                    // sheet (NSFW / PoW / schedule / private reply / draft).
                     Spacer(Modifier.height(4.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -783,35 +771,6 @@ fun ComposeScreen(
                             Icon(Icons.Outlined.Image, contentDescription = "Attach media")
                         }
 
-                        IconButton(onClick = {
-                            val nextState = !explicit
-                            viewModel.toggleExplicit()
-                            android.widget.Toast.makeText(context, "NSFW ${if (nextState) "ON" else "OFF"}", android.widget.Toast.LENGTH_SHORT).show()
-                        }) {
-                            Icon(
-                                Icons.Outlined.Warning,
-                                contentDescription = "Mark as explicit",
-                                tint = if (explicit) MaterialTheme.colorScheme.error
-                                       else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-
-                        IconButton(onClick = {
-                            val prefs = powPrefs
-                            if (prefs != null) {
-                                val nextState = !powEnabled
-                                viewModel.togglePow(prefs)
-                                android.widget.Toast.makeText(context, "Mining ${if (nextState) "ON" else "OFF"}", android.widget.Toast.LENGTH_SHORT).show()
-                            }
-                        }) {
-                            Icon(
-                                Icons.Outlined.Shield,
-                                contentDescription = "Proof of Work",
-                                tint = if (powEnabled) WispThemeColors.zapColor
-                                       else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-
                         IconButton(onClick = { viewModel.togglePoll() }) {
                             Icon(
                                 Icons.Outlined.BarChart,
@@ -821,47 +780,21 @@ fun ComposeScreen(
                             )
                         }
 
-                        // Private reply toggle: only meaningful for replies in plain text mode
-                        // (private replies don't carry gallery/poll/schedule/quote payloads in v1).
-                        if (replyTo != null && quoteTo == null && !galleryMode && !pollEnabled && !scheduleEnabled) {
-                            IconButton(onClick = {
-                                // Locked toggles short-circuit in the VM, so the state stays ON.
-                                val nextState = if (privateReplyLocked) true else !privateReply
-                                viewModel.togglePrivateReply()
-                                android.widget.Toast.makeText(context, "Private Reply ${if (nextState) "ON" else "OFF"}", android.widget.Toast.LENGTH_SHORT).show()
-                            }) {
-                                Icon(
-                                    imageVector = Icons.Outlined.VisibilityOff,
-                                    contentDescription = "Private reply",
-                                    tint = if (privateReply) androidx.compose.ui.graphics.Color(0xFFFF8C00)
-                                           else MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-
-                        IconButton(onClick = {
-                            if (scheduleEnabled) {
-                                viewModel.toggleSchedule()
-                            } else {
-                                viewModel.toggleSchedule()
-                                showDatePicker = true
-                            }
-                        }) {
-                            Icon(
-                                Icons.Outlined.Schedule,
-                                contentDescription = "Schedule post",
-                                tint = if (scheduleEnabled) MaterialTheme.colorScheme.primary
-                                       else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-
                         Spacer(Modifier.weight(1f))
 
-                            if (content.text.isNotBlank()) {
-                            TextButton(
-                                onClick = onSaveDraft
-                            ) {
-                                Text(stringResource(R.string.btn_save_draft))
+                        // Secondary panel trigger. Active toggles surface a dot so
+                        // state set in the sheet stays visible after it closes.
+                        Box(contentAlignment = Alignment.TopEnd) {
+                            IconButton(onClick = { showMoreSheet = true }) {
+                                Icon(Icons.Outlined.MoreHoriz, contentDescription = "More options")
+                            }
+                            if (explicit || powEnabled || scheduleEnabled || privateReply) {
+                                Box(
+                                    modifier = Modifier
+                                        .padding(top = 10.dp, end = 10.dp)
+                                        .size(8.dp)
+                                        .background(MaterialTheme.colorScheme.primary, CircleShape)
+                                )
                             }
                         }
                     }
@@ -983,6 +916,25 @@ fun ComposeScreen(
                                         )
                                     }
                                 }
+                            }
+                            // Polls publish as a dedicated kind (1068 / zap
+                            // poll), which clients without poll support hide.
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.padding(bottom = 4.dp)
+                            ) {
+                                Icon(
+                                    Icons.Outlined.Info,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Text(
+                                    text = "On clients that don't display polls, this post won't be visible.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                             pollOptions.forEachIndexed { index, option ->
                                 Row(
@@ -1392,6 +1344,42 @@ fun ComposeScreen(
                         if (scheduleTimestamp == null) viewModel.toggleSchedule()
                     }) { Text("Cancel") }
                 }
+            )
+        }
+
+        if (showMoreSheet) {
+            ComposerMoreSheet(
+                explicit = explicit,
+                onToggleExplicit = { viewModel.toggleExplicit() },
+                powEnabled = powEnabled,
+                powAvailable = powPrefs != null,
+                onTogglePow = { powPrefs?.let { viewModel.togglePow(it) } },
+                scheduleEnabled = scheduleEnabled,
+                scheduleSummary = scheduleTimestamp?.let {
+                    val fmt = SimpleDateFormat("MMM d, yyyy 'at' h:mm a", Locale.getDefault())
+                    "Scheduled for " + fmt.format(Date(it * 1000))
+                },
+                onToggleSchedule = {
+                    if (scheduleEnabled) {
+                        viewModel.toggleSchedule()
+                    } else {
+                        // The date picker can't stack on this sheet — hand the
+                        // presentation off as the More sheet dismisses.
+                        viewModel.toggleSchedule()
+                        showMoreSheet = false
+                        showDatePicker = true
+                    }
+                },
+                privateReplyVisible = replyTo != null && quoteTo == null && !galleryMode && !pollEnabled && !scheduleEnabled,
+                privateReplyEnabled = privateReply,
+                privateReplyLocked = privateReplyLocked,
+                onTogglePrivateReply = { viewModel.togglePrivateReply() },
+                saveDraftVisible = content.text.isNotBlank(),
+                onSaveDraft = {
+                    onSaveDraft()
+                    showMoreSheet = false
+                },
+                onDismiss = { showMoreSheet = false }
             )
         }
     }
