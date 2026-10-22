@@ -11,6 +11,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -132,6 +133,7 @@ import com.wisp.app.repo.PowPreferences
 import com.wisp.app.R
 import com.wisp.app.ui.component.ComposerMoreSheet
 import com.wisp.app.ui.component.EmojiShortcodePopup
+import com.wisp.app.ui.component.GifPickerSheet
 import com.wisp.app.ui.component.EmojiVisualTransformation
 import com.wisp.app.ui.component.MentionOutputTransformation
 import com.wisp.app.ui.component.ProfilePicture
@@ -205,6 +207,7 @@ fun ComposeScreen(
     // Secondary panel: NSFW / PoW / schedule / private reply / draft live here
     // instead of crowding the attach row (composer redesign, Oct 2026).
     var showMoreSheet by remember { mutableStateOf(false) }
+    var showGifPicker by remember { mutableStateOf(false) }
 
     val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
 
@@ -755,8 +758,8 @@ fun ComposeScreen(
 
                     // Attach row, slimmed (composer redesign, Oct 2026): only
                     // what a standard social client offers inline stays here —
-                    // media and poll; everything else overflows into the More
-                    // sheet (NSFW / PoW / schedule / private reply / draft).
+                    // media, GIF and poll; everything else overflows into the
+                    // More sheet (NSFW / PoW / schedule / private reply / draft).
                     Spacer(Modifier.height(4.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -771,6 +774,27 @@ fun ComposeScreen(
                             enabled = uploadProgress == null && countdownSeconds == null
                         ) {
                             Icon(Icons.Outlined.Image, contentDescription = "Attach media")
+                        }
+
+                        // GIF picker (Giphy-backed, mirroring iOS) — hidden while
+                        // a poll is armed; polls don't carry media payloads.
+                        if (!pollEnabled) {
+                            Surface(
+                                onClick = { showGifPicker = true },
+                                shape = RoundedCornerShape(5.dp),
+                                border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.onSurfaceVariant),
+                                color = Color.Transparent,
+                                contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(start = 8.dp)
+                            ) {
+                                Text(
+                                    text = "GIF",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontWeight = FontWeight.Bold
+                                    ),
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 5.dp)
+                                )
+                            }
                         }
 
                         IconButton(onClick = { viewModel.togglePoll() }) {
@@ -1382,6 +1406,16 @@ fun ComposeScreen(
                     showMoreSheet = false
                 },
                 onDismiss = { showMoreSheet = false }
+            )
+        }
+
+        if (showGifPicker) {
+            GifPickerSheet(
+                onPick = { url ->
+                    showGifPicker = false
+                    viewModel.uploadGifFromUrl(url, signer)
+                },
+                onDismiss = { showGifPicker = false }
             )
         }
     }

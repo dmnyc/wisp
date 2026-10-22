@@ -15,3 +15,6 @@ node_modules/
 app/temp/
 .kotlin/
 .vscode/
+
+# Giphy API key override for the composer GIF picker (see giphy-api-key.txt.example)
+app/src/main/assets/giphy-api-key.txt

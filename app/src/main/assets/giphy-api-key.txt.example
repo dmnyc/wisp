@@ -1,0 +1,3 @@
+Copy this file to giphy-api-key.txt (same directory) and paste a Giphy
+API key to override the shared development key compiled in as fallback.
+The real giphy-api-key.txt is gitignored — never commit it.

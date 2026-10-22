@@ -19,7 +19,6 @@ import com.wisp.app.nostr.Nip10
 import com.wisp.app.nostr.Nip30
 import com.wisp.app.nostr.Nip18
 import com.wisp.app.nostr.Nip19
-import com.wisp.app.nostr.Nip22
 import com.wisp.app.nostr.Nip37
 import com.wisp.app.nostr.Nip68
 import com.wisp.app.nostr.Nip71
@@ -39,6 +38,7 @@ import com.wisp.app.repo.PrivateReplyPublisher
 import com.wisp.app.repo.MentionCandidate
 import com.wisp.app.repo.MentionSearchRepository
 import com.wisp.app.repo.EventRepository
+import com.wisp.app.repo.GiphyRepository
 import com.wisp.app.repo.InterfacePreferences
 import com.wisp.app.repo.ProfileRepository
 import com.wisp.app.repo.RelayListRepository
@@ -77,6 +77,7 @@ class ComposeViewModel(app: Application, private val savedStateHandle: SavedStat
     private val keyRepo = KeyRepository(app)
     private val interfacePrefs = InterfacePreferences(app)
     val blossomRepo = BlossomRepository(app, keyRepo.getPubkeyHex())
+    private val giphyRepo by lazy { GiphyRepository(app) }
 
     fun reloadBlossomRepo() {
         blossomRepo.reload(keyRepo.getPubkeyHex())
@@ -328,37 +329,74 @@ class ComposeViewModel(app: Application, private val savedStateHandle: SavedStat
                 try {
                     _uploadProgress.value = if (total > 1) "Uploading ${index + 1}/$total..." else "Uploading..."
                     val (rawBytes, rawMime, rawExt) = readFileFromUri(contentResolver, uri)
-                    val (bytes, mime, ext) = when {
-                        rawMime == "image/gif" -> GifToMp4Converter.convert(rawBytes, getApplication())
-                        rawMime.startsWith("image/") -> MediaCompressor.compressForContent(rawBytes, rawMime).asTriple()
-                        else -> Triple(rawBytes, rawMime, rawExt)
-                    }
-                    // Re-extract dimensions from post-pipeline bytes so dim tags match what's uploaded.
-                    val dims = extractDimensionsFromBytes(bytes, mime)
-                    val thumbhash = if (mime.startsWith("image/")) createThumbhash(bytes) else null
-                    val url = blossomRepo.uploadMedia(bytes, mime, ext, signer)
-                    _uploadedUrls.value = _uploadedUrls.value + url
-                    _uploadedMediaMeta[url] = UploadedMediaMeta(
-                        mimeType = mime,
-                        dimensions = dims,
-                        thumbhash = thumbhash
-                    )
-                    if (_galleryMode.value && mime.startsWith("video/")) {
-                        _galleryHasVideo.value = true
-                    }
-                    // In gallery mode, don't insert URLs into the text — they're shown in the pager
-                    if (!_galleryMode.value) {
-                        val current = _content.value.text
-                        val newText = if (current.isBlank()) url else "$current\n$url"
-                        _content.value = TextFieldValue(newText, TextRange(newText.length))
-                        savedStateHandle["draft_content"] = newText
-                    }
+                    if (!processUpload(rawBytes, rawMime, rawExt, signer)) break
                 } catch (e: Exception) {
                     _error.value = "Upload failed: ${e.message}"
                     break
                 }
             }
             _uploadProgress.value = null
+        }
+    }
+
+    /** Picks a GIF or sticker from the Giphy picker: download the bytes from
+     *  Giphy's CDN and run the standard attachment pipeline, so a picked GIF
+     *  transcodes to MP4 exactly like a GIF chosen from the system picker. */
+    fun uploadGifFromUrl(url: String, signer: NostrSigner? = null) {
+        viewModelScope.launch {
+            _uploadProgress.value = "Uploading..."
+            try {
+                val (bytes, mime) = giphyRepo.download(url)
+                processUpload(bytes, mime, "gif", signer)
+            } catch (e: Exception) {
+                _error.value = "GIF download failed: ${e.message}"
+            } finally {
+                _uploadProgress.value = null
+            }
+        }
+    }
+
+    /** Shared attachment pipeline: GIFs transcode to MP4, other images
+     *  compress, dimensions + thumbhash are captured for imeta, the bytes go
+     *  to Blossom, and the URL attaches to this compose (into the body in
+     *  note mode; pager-only in gallery mode). Returns false when the upload
+     *  failed (error message already set). */
+    private suspend fun processUpload(
+        rawBytes: ByteArray,
+        rawMime: String,
+        rawExt: String,
+        signer: NostrSigner?
+    ): Boolean {
+        return try {
+            val (bytes, mime, ext) = when {
+                rawMime == "image/gif" -> GifToMp4Converter.convert(rawBytes, getApplication())
+                rawMime.startsWith("image/") -> MediaCompressor.compressForContent(rawBytes, rawMime).asTriple()
+                else -> Triple(rawBytes, rawMime, rawExt)
+            }
+            // Re-extract dimensions from post-pipeline bytes so dim tags match what's uploaded.
+            val dims = extractDimensionsFromBytes(bytes, mime)
+            val thumbhash = if (mime.startsWith("image/")) createThumbhash(bytes) else null
+            val url = blossomRepo.uploadMedia(bytes, mime, ext, signer)
+            _uploadedUrls.value = _uploadedUrls.value + url
+            _uploadedMediaMeta[url] = UploadedMediaMeta(
+                mimeType = mime,
+                dimensions = dims,
+                thumbhash = thumbhash
+            )
+            if (_galleryMode.value && mime.startsWith("video/")) {
+                _galleryHasVideo.value = true
+            }
+            // In gallery mode, don't insert URLs into the text — they're shown in the pager
+            if (!_galleryMode.value) {
+                val current = _content.value.text
+                val newText = if (current.isBlank()) url else "$current\n$url"
+                _content.value = TextFieldValue(newText, TextRange(newText.length))
+                savedStateHandle["draft_content"] = newText
+            }
+            true
+        } catch (e: Exception) {
+            _error.value = "Upload failed: ${e.message}"
+            false
         }
     }
 
@@ -670,13 +708,7 @@ class ComposeViewModel(app: Application, private val savedStateHandle: SavedStat
         }
         if (replyTo != null) {
             val hint = outboxRouter?.getRelayHint(replyTo.pubkey) ?: ""
-            if (replyTo.kind == Nip22.KIND_COMMENT) {
-                // Replying to a NIP-22 comment: publish a comment, with the root
-                // in the uppercase E scope and the parent in lowercase e.
-                tags.addAll(Nip22.buildCommentTags(replyTo, hint))
-            } else {
-                tags.addAll(Nip10.buildReplyTags(replyTo, hint))
-            }
+            tags.addAll(Nip10.buildReplyTags(replyTo, hint))
         }
 
         val (mentionedPubkeys, _) = extractNostrRefs(content)
@@ -778,9 +810,7 @@ class ComposeViewModel(app: Application, private val savedStateHandle: SavedStat
                 eventKind = Nip88.KIND_POLL
             }
         } else {
-            // Mirror the target's namespace: reply to a comment with a comment,
-            // everything else with a kind 1 note.
-            eventKind = if (replyTo?.kind == Nip22.KIND_COMMENT) Nip22.KIND_COMMENT else 1
+            eventKind = 1
         }
 
         if (!_galleryMode.value) {
@@ -1137,21 +1167,16 @@ class ComposeViewModel(app: Application, private val savedStateHandle: SavedStat
             try {
                 val innerTags = mutableListOf<List<String>>()
                 if (replyTo != null) {
-                    if (replyTo.kind == Nip22.KIND_COMMENT) {
-                        innerTags.addAll(Nip22.buildCommentTags(replyTo))
-                    } else {
-                        innerTags.addAll(Nip10.buildReplyTags(replyTo))
-                    }
+                    innerTags.addAll(Nip10.buildReplyTags(replyTo))
                 }
-                val innerKind = if (replyTo?.kind == Nip22.KIND_COMMENT) Nip22.KIND_COMMENT else 1
                 val innerJson = Nip37.serializeDraftContent(
                     pubkeyHex = signer.pubkeyHex,
-                    innerKind = innerKind,
+                    innerKind = 1,
                     content = text,
                     tags = innerTags
                 )
                 val encrypted = signer.nip44Encrypt(innerJson, signer.pubkeyHex)
-                val wrapperTags = Nip37.buildDraftTags(draftId, innerKind)
+                val wrapperTags = Nip37.buildDraftTags(draftId, 1)
                 val event = signer.signEvent(
                     kind = Nip37.KIND_DRAFT,
                     content = encrypted,
