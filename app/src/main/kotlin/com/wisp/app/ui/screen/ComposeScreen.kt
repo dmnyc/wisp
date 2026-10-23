@@ -41,6 +41,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -54,8 +55,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.foundation.text.input.TextFieldLineLimits
-import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -102,24 +101,28 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.KeyboardCapitalization
-import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import coil3.compose.AsyncImage
 import com.wisp.app.nostr.Nip19
 import com.wisp.app.nostr.toNpub
@@ -135,7 +138,6 @@ import com.wisp.app.ui.component.ComposerMoreSheet
 import com.wisp.app.ui.component.EmojiShortcodePopup
 import com.wisp.app.ui.component.GifPickerSheet
 import com.wisp.app.ui.component.EmojiVisualTransformation
-import com.wisp.app.ui.component.MentionOutputTransformation
 import com.wisp.app.ui.component.ProfilePicture
 import com.wisp.app.ui.component.RichContent
 import com.wisp.app.ui.component.detectEmojiAutocomplete
@@ -178,6 +180,7 @@ fun ComposeScreen(
     val countdownStartedAt by viewModel.countdownStartedAt.collectAsState()
     val mentionCandidates by viewModel.mentionCandidates.collectAsState()
     val mentionQuery by viewModel.mentionQuery.collectAsState()
+    val mentions by viewModel.mentions.collectAsState()
     val explicit by viewModel.explicit.collectAsState()
     val hashtags by viewModel.hashtags.collectAsState()
     val powEnabled by viewModel.powEnabled.collectAsState()
@@ -241,17 +244,15 @@ fun ComposeScreen(
         if (uris.isNotEmpty()) viewModel.uploadMedia(uris, context.contentResolver, signer)
     }
 
-    val outputTransformation = remember(profileRepo, resolvedEmojis) {
-        MentionOutputTransformation(
-            resolveDisplayName = { bech32 ->
-                if (profileRepo == null) return@MentionOutputTransformation null
-                try {
-                    val data = Nip19.decodeNostrUri("nostr:$bech32")
-                    if (data is com.wisp.app.nostr.NostrUriData.ProfileRef) {
-                        profileRepo.get(data.pubkey)?.displayString
-                    } else null
-                } catch (_: Exception) { null }
-            },
+    // Mention pill colors (iOS parity: accent text over a subtle accent fill,
+    // the same 12% wash the hashtag chips use).
+    val mentionPillTextColor = MaterialTheme.colorScheme.primary
+    val mentionPillFillColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+    val composerTransformation = remember(resolvedEmojis, mentions, mentionPillTextColor, mentionPillFillColor) {
+        com.wisp.app.ui.component.ComposerVisualTransformation(
+            mentionRanges = mentions.map { it.start to it.end },
+            pillTextColor = mentionPillTextColor,
+            pillFillColor = mentionPillFillColor,
             resolvedEmojis = resolvedEmojis
         )
     }
@@ -644,32 +645,6 @@ fun ComposeScreen(
                         }
                     }
 
-                    // Mention autocomplete dropdown
-                    AnimatedVisibility(
-                        visible = mentionQuery != null && mentionCandidates.isNotEmpty(),
-                        enter = fadeIn() + slideInVertically(),
-                        exit = fadeOut() + slideOutVertically()
-                    ) {
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            tonalElevation = 3.dp,
-                            shadowElevation = 2.dp,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(max = 200.dp)
-                                .padding(bottom = 4.dp)
-                        ) {
-                            LazyColumn {
-                                items(mentionCandidates, key = { it.profile.pubkey }) { candidate ->
-                                    MentionCandidateRow(
-                                        candidate = candidate,
-                                        onClick = { viewModel.selectMention(candidate) }
-                                    )
-                                }
-                            }
-                        }
-                    }
-
                     // Emoji shortcode autocomplete
                     val emojiState = remember(content) { detectEmojiAutocomplete(content) }
                     if (emojiState != null && mentionQuery == null) {
@@ -683,33 +658,25 @@ fun ComposeScreen(
                         )
                     }
 
-                    // Text field with GIF keyboard support via BasicTextField(TextFieldState)
-                    val textFieldState = remember { TextFieldState(content.text) }
+                    // Text field — value-based BasicTextField (same pattern as
+                    // the gallery caption): the mention pills need span-styled
+                    // output, which the state API's OutputTransformation can't
+                    // produce before Compose 1.8. The VM's content is the
+                    // single source of truth.
                     val enabled = !publishing && countdownSeconds == null
 
-                    // Sync ViewModel -> TextFieldState (for programmatic updates: upload URL, mention select, etc.)
-                    LaunchedEffect(content) {
-                        if (textFieldState.text.toString() != content.text) {
-                            textFieldState.edit {
-                                replace(0, length, content.text)
-                                selection = content.selection
-                            }
-                        }
-                    }
-
-                    // Sync TextFieldState -> ViewModel (for user typing)
-                    LaunchedEffect(textFieldState) {
-                        snapshotFlow {
-                            textFieldState.text.toString() to textFieldState.selection
-                        }.collect { (text, selection) ->
-                            if (text != content.text) {
-                                viewModel.updateContent(TextFieldValue(text, selection))
-                            }
-                        }
-                    }
+                    // Mention autocomplete — cursor-anchored overlay below, so
+                    // it tracks the caret instead of the composer's tail.
+                    var textLayout by remember { mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null) }
 
                     BasicTextField(
-                        state = textFieldState,
+                        value = content,
+                        onValueChange = { new ->
+                            if (!com.wisp.app.ui.component.NsecPasteGuard.blockIfNsec(content.text, new.text)) {
+                                viewModel.updateContent(new)
+                            }
+                        },
+                        onTextLayout = { textLayout = it },
                         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                         modifier = Modifier
                             .fillMaxWidth()
@@ -732,19 +699,25 @@ fun ComposeScreen(
                             }),
                         enabled = enabled,
                         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                        inputTransformation = com.wisp.app.ui.component.NsecPasteGuard.inputTransformation,
-                        lineLimits = TextFieldLineLimits.MultiLine(),
-                        outputTransformation = outputTransformation,
+                        visualTransformation = composerTransformation,
                         textStyle = MaterialTheme.typography.bodyLarge.copy(
                             color = MaterialTheme.colorScheme.onSurface
                         ),
-                        decorator = { innerTextField ->
+                        decorationBox = { innerTextField ->
                             // Borderless entry field (iOS parity): no outline
                             // box — just the placeholder when empty, flush with
-                            // the composer's other content. (The M3 DecorationBox
-                            // can't drop its outline before material3 1.4.)
-                            Box(modifier = Modifier.fillMaxWidth()) {
-                                if (textFieldState.text.isEmpty()) {
+                            // the composer's other content.
+                            var fieldWidthPx by remember { mutableStateOf(0) }
+                            var fieldOriginY by remember { mutableStateOf(0f) }
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .onGloballyPositioned {
+                                        fieldWidthPx = it.size.width
+                                        fieldOriginY = it.positionInRoot().y
+                                    }
+                            ) {
+                                if (content.text.isEmpty()) {
                                     Text(
                                         stringResource(R.string.compose_placeholder),
                                         style = MaterialTheme.typography.bodyLarge,
@@ -752,6 +725,60 @@ fun ComposeScreen(
                                     )
                                 }
                                 innerTextField()
+                                // Mention results anchored under the cursor, in
+                                // a Popup so they draw over the attach row and
+                                // every other composer sibling — an in-tree
+                                // overlay loses to later-drawn siblings no
+                                // matter its zIndex. Height clamps to the room
+                                // between the caret line and the keyboard.
+                                if (mentionQuery != null && mentionCandidates.isNotEmpty()) {
+                                    val layout = textLayout
+                                    val cursorRect = layout?.getCursorRect(
+                                        content.selection.start.coerceIn(
+                                            0,
+                                            layout.layoutInput.text.length
+                                        )
+                                    )
+                                    if (cursorRect != null) {
+                                        val density = LocalDensity.current
+                                        val cursorBottomPx = fieldOriginY +
+                                            cursorRect.bottom + with(density) { 4.dp.toPx() }
+                                        val imeBottomPx = WindowInsets.ime.getBottom(density)
+                                        val screenHpx = with(density) {
+                                            LocalConfiguration.current.screenHeightDp.dp.toPx()
+                                        }
+                                        val maxHeight = with(density) {
+                                            ((screenHpx - imeBottomPx - cursorBottomPx - 8.dp.toPx())
+                                                .coerceIn(120.dp.toPx(), 200.dp.toPx())).toDp()
+                                        }
+                                        val width = with(density) { fieldWidthPx.toDp() }
+                                        Popup(
+                                            alignment = Alignment.TopStart,
+                                            offset = IntOffset(0, (cursorBottomPx - fieldOriginY).roundToInt()),
+                                            properties = PopupProperties(focusable = false)
+                                        ) {
+                                            Surface(
+                                                shape = RoundedCornerShape(8.dp),
+                                                tonalElevation = 3.dp,
+                                                shadowElevation = 4.dp,
+                                                modifier = Modifier
+                                                    .width(width)
+                                                    .heightIn(max = maxHeight)
+                                            ) {
+                                                LazyColumn(
+                                                    modifier = Modifier.fillMaxWidth()
+                                                ) {
+                                                    items(mentionCandidates, key = { it.profile.pubkey }) { candidate ->
+                                                        MentionCandidateRow(
+                                                            candidate = candidate,
+                                                            onClick = { viewModel.selectMention(candidate) }
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     )
@@ -1148,24 +1175,40 @@ fun ComposeScreen(
                                 ) {
                                     ProfilePicture(url = userProfile?.picture, size = 32)
                                     Spacer(Modifier.width(8.dp))
-                                    Column {
-                                        Text(
-                                            text = userProfile?.displayString ?: "You",
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            fontWeight = FontWeight.Medium,
-                                            maxLines = 1
-                                        )
-                                        Text(
-                                            text = "Preview",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
+                                    Text(
+                                        text = userProfile?.displayString ?: "You",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Medium,
+                                        maxLines = 1,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    // "Preview" badge pinned to the card's top-right
+                                    // corner (iOS parity), not stacked under the name.
+                                    Text(
+                                        text = "Preview",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier
+                                            .background(
+                                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                                                RoundedCornerShape(50)
+                                            )
+                                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                                    )
                                 }
                                 RichContent(
                                     content = content.text,
                                     emojiMap = resolvedEmojis,
-                                    eventRepo = eventRepo
+                                    eventRepo = eventRepo,
+                                    mentionNames = remember(mentions, content.text) {
+                                        mentions.mapNotNull { m ->
+                                            if (m.start < m.end && m.end <= content.text.length) {
+                                                content.text.substring(m.start, m.end)
+                                                    .removePrefix("@").takeIf { it.isNotBlank() }
+                                            } else null
+                                        }
+                                    }
                                 )
                                 // Poll preview
                                 if (pollEnabled) {
